@@ -72,6 +72,12 @@ def _load_snap(path: str):
     return [graph], [graph], "graph"
 
 
+def _load_atlas():
+    """加载 networkx graph atlas 中所有连通图，train 与 test 共用同一列表。"""
+    graphs = [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)]
+    return graphs, graphs, "graph"
+
+
 _DATASET_LOADERS: Dict[str, Callable] = {
     "enzymes":       _make_tu_loader("ENZYMES",       "/tmp/ENZYMES"),
     "proteins":      _make_tu_loader("PROTEINS",      "/tmp/PROTEINS"),
@@ -83,10 +89,7 @@ _DATASET_LOADERS: Dict[str, Callable] = {
     "dblp":          _make_tu_loader("DBLP_v1",        "/tmp/DBLP_v1"),
     "ppi":           lambda: _split_pyg_dataset(PPI(root="/tmp/PPI")),
     "qm9":           lambda: _split_pyg_dataset(QM9(root="/tmp/QM9")),
-    "atlas":         lambda: (
-                        [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)],
-                        [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)],
-                        "graph"),
+    "atlas":         lambda: _load_atlas(),
     "facebook":      lambda: _load_snap("data/facebook_combined.txt"),
     "as-733":        lambda: _load_snap("data/as20000102.txt"),
     "as20000102":    lambda: _load_snap("data/as20000102.txt"),

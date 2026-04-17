@@ -259,8 +259,8 @@ def pattern_growth(dataset, task, args):
     """
     model = _load_mining_model(args)
 
-    print(len(dataset) if not isinstance(dataset, tuple) else
-          len(dataset[0]), "graphs")
+    n_graphs = len(dataset[0]) if isinstance(dataset, tuple) else len(dataset)
+    print(n_graphs, "graphs")
     print("search strategy:", args.search_strategy)
 
     graphs = _prepare_graphs(dataset, task, args)
@@ -268,12 +268,10 @@ def pattern_growth(dataset, task, args):
     start_time = time.time()
     neighs, anchors = _sample_neighborhoods(graphs, args)
 
+    embs = _embed_neighborhoods(neighs, anchors, model, args)
     if args.analyze:
-        embs = _embed_neighborhoods(neighs, anchors, model, args)
         embs_np = torch.stack(embs).numpy()
         plt.scatter(embs_np[:, 0], embs_np[:, 1], label="node neighborhood")
-    else:
-        embs = _embed_neighborhoods(neighs, anchors, model, args)
 
     agent = _make_search_agent(model, graphs, embs, args)
     out_graphs = agent.run_search(args.n_trials)

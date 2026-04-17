@@ -345,7 +345,9 @@ def build_model(args):
     elif args.method_type == "mlp":
         model = BaselineMLP(1, args.hidden_dim, args)
     else:
-        raise ValueError("未识别的 method_type: {}".format(args.method_type))
+        raise ValueError(
+            "未识别的 method_type: {}。可选值: 'order', 'mlp'".format(
+                args.method_type))
     model.to(get_device())
     if getattr(args, "test", False) and getattr(args, "model_path", None):
         import torch

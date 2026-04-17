@@ -47,46 +47,21 @@ else:
 from subgraph_matching.test import validation
 
 def build_model(args):
-    """根据命令行参数构建编码器模型，并在测试模式下加载权重。"""
-    if args.method_type == "order":
-        model = models.OrderEmbedder(1, args.hidden_dim, args)
-    elif args.method_type == "mlp":
-        model = models.BaselineMLP(1, args.hidden_dim, args)
-    model.to(utils.get_device())
-    if args.test and args.model_path:
-        model.load_state_dict(torch.load(args.model_path,
-            map_location=utils.get_device()))
-    return model
+    """根据命令行参数构建编码器模型，并在测试模式下加载权重。
+
+    实际构建逻辑已统一迁移至 common.models.build_model，
+    此处保留为向后兼容的薄壳调用。
+    """
+    return models.build_model(args)
+
 
 def make_data_source(args):
     """按数据集名称创建对应的数据源对象。
 
-    这里将数据集分为两类：
-    - syn：在线生成的合成数据；
-    - disk：磁盘上已有图数据集。
-
-    另外支持 balanced / imbalanced 两种采样方式。
+    实际逻辑已迁移至 common.data.create_data_source，
+    此处保留为向后兼容的薄壳调用。
     """
-    toks = args.dataset.split("-")
-    if toks[0] == "syn":
-        if len(toks) == 1 or toks[1] == "balanced":
-            data_source = data.OTFSynDataSource(
-                node_anchored=args.node_anchored)
-        elif toks[1] == "imbalanced":
-            data_source = data.OTFSynImbalancedDataSource(
-                node_anchored=args.node_anchored)
-        else:
-            raise Exception("Error: unrecognized dataset")
-    else:
-        if len(toks) == 1 or toks[1] == "balanced":
-            data_source = data.DiskDataSource(toks[0],
-                node_anchored=args.node_anchored)
-        elif toks[1] == "imbalanced":
-            data_source = data.DiskImbalancedDataSource(toks[0],
-                node_anchored=args.node_anchored)
-        else:
-            raise Exception("Error: unrecognized dataset")
-    return data_source
+    return data.create_data_source(args)
 
 def train(args, model, logger, in_queue, out_queue):
     """训练序嵌入模型。

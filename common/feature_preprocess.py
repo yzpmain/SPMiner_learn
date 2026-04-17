@@ -1,6 +1,8 @@
 import os
 import pickle
 import random
+from dataclasses import dataclass, field
+from typing import List
 import networkx as nx
 import numpy as np
 from sklearn.manifold import TSNE
@@ -23,12 +25,36 @@ from torch_scatter import scatter_add
 
 from common import utils
 
-AUGMENT_METHOD = "concat"
-FEATURE_AUGMENT, FEATURE_AUGMENT_DIMS = [], []
-#FEATURE_AUGMENT, FEATURE_AUGMENT_DIMS = ["identity"], [4]
-#FEATURE_AUGMENT = ["motif_counts"]
-#FEATURE_AUGMENT_DIMS = [73]
-#FEATURE_AUGMENT_DIMS = [15]
+
+# ---------------------------------------------------------------------------
+# FeatureConfig: 特征增强配置（取代原有三个模块级全局变量）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FeatureConfig:
+    """特征增强配置。
+
+    字段说明：
+        augment_methods: 要应用的特征增强名称列表，如 ["identity"]。
+        augment_dims:    与 augment_methods 一一对应的维度列表，如 [4]。
+        augment_combine: 特征合并方式，"concat"（拼接）或 "add"（加法投影）。
+    """
+    augment_methods: List[str] = field(default_factory=list)
+    augment_dims:    List[int] = field(default_factory=list)
+    augment_combine: str = "concat"
+
+
+# 默认配置：与原代码中三个全局变量的默认值完全一致（不做任何增强）。
+DEFAULT_FEATURE_CONFIG = FeatureConfig()
+
+# ---------------------------------------------------------------------------
+# 向后兼容别名：原全局变量保留为对默认配置属性的引用，
+# 确保其他模块中 `from common.feature_preprocess import FEATURE_AUGMENT` 等
+# 调用仍能正常工作。
+# ---------------------------------------------------------------------------
+AUGMENT_METHOD = DEFAULT_FEATURE_CONFIG.augment_combine
+FEATURE_AUGMENT = DEFAULT_FEATURE_CONFIG.augment_methods
+FEATURE_AUGMENT_DIMS = DEFAULT_FEATURE_CONFIG.augment_dims
 
 def norm(edge_index, num_nodes, edge_weight=None, improved=False,
          dtype=None):
@@ -69,8 +95,15 @@ def compute_identity(edge_index, n, k):
     return diag_all
 
 class FeatureAugment(nn.Module):
-    def __init__(self):
+    def __init__(self, config: FeatureConfig = DEFAULT_FEATURE_CONFIG):
+        """初始化特征增强器。
+
+        参数：
+            config: FeatureConfig 实例，控制使用哪些增强及合并方式。
+                    默认使用 DEFAULT_FEATURE_CONFIG（与原全局变量行为一致）。
+        """
         super(FeatureAugment, self).__init__()
+        self.config = config
 
         def degree_fun(graph, feature_dim):
             graph.node_degree = self._one_hot_tensor(
@@ -184,46 +217,57 @@ class FeatureAugment(nn.Module):
         return one_hot
 
     def augment(self, dataset):
+        """对数据集中每张图应用特征增强。
+
+        先应用基础节点特征（全 1），再依次应用 config 中指定的增强。
+        """
         dataset = dataset.apply_transform(self.node_features_base_fun,
             feature_dim=1)
-        for key, dim in zip(FEATURE_AUGMENT, FEATURE_AUGMENT_DIMS):
-            dataset = dataset.apply_transform(self.node_feature_funs[key], 
+        for key, dim in zip(self.config.augment_methods,
+                            self.config.augment_dims):
+            dataset = dataset.apply_transform(self.node_feature_funs[key],
                 feature_dim=dim)
         return dataset
 
 class Preprocess(nn.Module):
-    def __init__(self, dim_in):
+    def __init__(self, dim_in, config: FeatureConfig = DEFAULT_FEATURE_CONFIG):
+        """初始化特征预处理层。
+
+        参数：
+            dim_in: 输入节点特征维度。
+            config: FeatureConfig 实例，控制增强方式。
+        """
         super(Preprocess, self).__init__()
         self.dim_in = dim_in
-        if AUGMENT_METHOD == 'add':
+        self.config = config
+        if config.augment_combine == 'add':
             self.module_dict = {
                     key: nn.Linear(aug_dim, dim_in)
-                    for key, aug_dim in zip(FEATURE_AUGMENT, 
-                                            FEATURE_AUGMENT_DIMS)
+                    for key, aug_dim in zip(config.augment_methods,
+                                            config.augment_dims)
                     }
 
     @property
     def dim_out(self):
-        if AUGMENT_METHOD == 'concat':
-            return self.dim_in + sum(
-                    [aug_dim for aug_dim in FEATURE_AUGMENT_DIMS])
-        elif AUGMENT_METHOD == 'add':
-            return dim_in
+        if self.config.augment_combine == 'concat':
+            return self.dim_in + sum(self.config.augment_dims)
+        elif self.config.augment_combine == 'add':
+            return self.dim_in
         else:
             raise ValueError('Unknown feature augmentation method {}.'.format(
-                    AUGMENT_METHOD))
+                    self.config.augment_combine))
 
     def forward(self, batch):
-        if AUGMENT_METHOD == 'concat':
+        if self.config.augment_combine == 'concat':
             feature_list = [batch.node_feature]
-            for key in FEATURE_AUGMENT:
+            for key in self.config.augment_methods:
                 feature_list.append(batch[key])
             batch.node_feature = torch.cat(feature_list, dim=-1)
-        elif AUGMENT_METHOD == 'add':
-            for key in FEATURE_AUGMENT:
+        elif self.config.augment_combine == 'add':
+            for key in self.config.augment_methods:
                 batch.node_feature = batch.node_feature + self.module_dict[key](
                         batch[key])
         else:
             raise ValueError('Unknown feature augmentation method {}.'.format(
-                    AUGMENT_METHOD))
+                    self.config.augment_combine))
         return batch

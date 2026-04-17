@@ -1,16 +1,24 @@
+"""SPMiner 解码（挖掘）阶段参数注册。
+
+编码器结构参数（两阶段共用）由 common.config_base.add_encoder_args 注入，
+本文件只保留挖掘阶段独有的参数：采样策略、邻域大小、搜索策略等。
+"""
 import argparse
+
+from common.config_base import add_encoder_args
 from common import utils
+
 
 def parse_decoder(parser):
     """注册 SPMiner 解码阶段参数。
 
-    该函数仅负责把“子图挖掘阶段”所需参数挂到现有 argparse 解析器上，
+    该函数仅负责把"子图挖掘阶段"所需参数挂到现有 argparse 解析器上，
     不直接执行任何挖掘逻辑。它通常与编码器参数组合使用。
 
     参数：
         parser: 外部创建的 argparse.ArgumentParser。
     """
-    dec_parser = parser.add_argument_group()
+    dec_parser = parser.add_argument_group("挖掘阶段独有参数")
     dec_parser.add_argument('--sample_method', type=str,
                         help='"tree"（树形）或 "radial"（辐射形）')
     dec_parser.add_argument('--motif_dataset', type=str,

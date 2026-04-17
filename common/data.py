@@ -1,6 +1,20 @@
+"""数据集加载与数据源创建模块。
+
+主要提供：
+  load_dataset(name)          —— 按名称加载 networkx 图集合（注册表驱动）
+  create_data_source(args)    —— 按 args.dataset 创建对应的 DataSource 实例
+
+DataSource 体系：
+  DataSource                  —— 抽象基类
+  OTFSynDataSource            —— 在线合成数据（平衡）
+  OTFSynImbalancedDataSource  —— 在线合成数据（不平衡）
+  DiskDataSource              —— 磁盘数据集（平衡）
+  DiskImbalancedDataSource    —— 磁盘数据集（不平衡）
+"""
 import os
 import pickle
 import random
+from typing import Callable, Dict
 
 from deepsnap.graph import Graph as DSGraph
 from deepsnap.batch import Batch
@@ -18,65 +32,92 @@ from common import combined_syn
 from common import feature_preprocess
 from common import utils
 
-def load_dataset(name):
-    """ 加载 PyTorch Geometric 中提供的真实世界数据集。
 
-    用作 DiskDataSource 的辅助函数。
+# ---------------------------------------------------------------------------
+# 数据集注册表
+# 每个条目：dataset_key -> callable() -> (train_list, test_list, task)
+# 新增数据集只需在 _DATASET_LOADERS 中添加一行，load_dataset 无需修改。
+# ---------------------------------------------------------------------------
+
+def _make_tu_loader(name: str, root: str):
+    """工厂：返回加载 TUDataset 并按 8:2 划分的 loader 函数。"""
+    def _loader():
+        dataset = TUDataset(root=root, name=name)
+        return _split_pyg_dataset(dataset)
+    return _loader
+
+
+def _split_pyg_dataset(dataset, train_ratio=0.8):
+    """将 PyG Dataset 随机打乱后按比例切分为 train / test。"""
+    train_len = int(train_ratio * len(dataset))
+    train, test = [], []
+    dataset = list(dataset)
+    random.shuffle(dataset)
+    has_name = hasattr(dataset[0], "name")
+    for i, graph in tqdm(enumerate(dataset)):
+        if not type(graph) == nx.Graph:
+            if has_name:
+                del graph.name
+            graph = pyg_utils.to_networkx(graph).to_undirected()
+        if i < train_len:
+            train.append(graph)
+        else:
+            test.append(graph)
+    return train, test, "graph"
+
+
+def _load_snap(path: str):
+    """从 SNAP 边列表文件加载单张大图，作为 train/test 均返回该图。"""
+    graph = utils.load_snap_edgelist(path)
+    return [graph], [graph], "graph"
+
+
+_DATASET_LOADERS: Dict[str, Callable] = {
+    "enzymes":       _make_tu_loader("ENZYMES",       "/tmp/ENZYMES"),
+    "proteins":      _make_tu_loader("PROTEINS",      "/tmp/PROTEINS"),
+    "cox2":          _make_tu_loader("COX2",           "/tmp/cox2"),
+    "aids":          _make_tu_loader("AIDS",           "/tmp/AIDS"),
+    "reddit-binary": _make_tu_loader("REDDIT-BINARY",  "/tmp/REDDIT-BINARY"),
+    "imdb-binary":   _make_tu_loader("IMDB-BINARY",    "/tmp/IMDB-BINARY"),
+    "firstmm_db":    _make_tu_loader("FIRSTMM_DB",     "/tmp/FIRSTMM_DB"),
+    "dblp":          _make_tu_loader("DBLP_v1",        "/tmp/DBLP_v1"),
+    "ppi":           lambda: _split_pyg_dataset(PPI(root="/tmp/PPI")),
+    "qm9":           lambda: _split_pyg_dataset(QM9(root="/tmp/QM9")),
+    "atlas":         lambda: (
+                        [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)],
+                        [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)],
+                        "graph"),
+    "facebook":      lambda: _load_snap("data/facebook_combined.txt"),
+    "as-733":        lambda: _load_snap("data/as20000102.txt"),
+    "as20000102":    lambda: _load_snap("data/as20000102.txt"),
+}
+
+
+def load_dataset(name: str):
+    """按名称加载数据集，返回 (train_graphs, test_graphs, task)。
+
+    通过 _DATASET_LOADERS 注册表驱动，新增数据集无需修改本函数。
+
+    参数：
+        name: 数据集名称，对应注册表中的键。
+    返回：
+        (train_list, test_list, task_str) 三元组。
     """
-    task = "graph"
-    if name == "enzymes":
-        dataset = TUDataset(root="/tmp/ENZYMES", name="ENZYMES")
-    elif name == "proteins":
-        dataset = TUDataset(root="/tmp/PROTEINS", name="PROTEINS")
-    elif name == "cox2":
-        dataset = TUDataset(root="/tmp/cox2", name="COX2")
-    elif name == "aids":
-        dataset = TUDataset(root="/tmp/AIDS", name="AIDS")
-    elif name == "reddit-binary":
-        dataset = TUDataset(root="/tmp/REDDIT-BINARY", name="REDDIT-BINARY")
-    elif name == "imdb-binary":
-        dataset = TUDataset(root="/tmp/IMDB-BINARY", name="IMDB-BINARY")
-    elif name == "firstmm_db":
-        dataset = TUDataset(root="/tmp/FIRSTMM_DB", name="FIRSTMM_DB")
-    elif name == "dblp":
-        dataset = TUDataset(root="/tmp/DBLP_v1", name="DBLP_v1")
-    elif name == "ppi":
-        dataset = PPI(root="/tmp/PPI")
-    elif name == "qm9":
-        dataset = QM9(root="/tmp/QM9")
-    elif name == "atlas":
-        dataset = [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)]
-    elif name == "facebook":
-        # 斯坦福 SNAP ego-Facebook 数据集（单个大图）
-        # 文件来源：https://snap.stanford.edu/data/ego-Facebook.html
-        # 请将 facebook_combined.txt 放置在 data/ 目录下
-        graph = utils.load_snap_edgelist("data/facebook_combined.txt")
-        return [graph], [graph], "graph"
-    elif name in ("as-733", "as20000102"):
-        # 斯坦福 SNAP Autonomous Systems AS-733 数据集。
-        # 这里默认使用数据集里节点和边都最多的一天快照（2000-01-02）。
-        # 请将 as20000102.txt 放置在 data/ 目录下。
-        graph = utils.load_snap_edgelist("data/as20000102.txt")
-        return [graph], [graph], "graph"
-    if task == "graph":
-        train_len = int(0.8 * len(dataset))
-        train, test = [], []
-        dataset = list(dataset)
-        random.shuffle(dataset)
-        has_name = hasattr(dataset[0], "name")
-        for i, graph in tqdm(enumerate(dataset)):
-            if not type(graph) == nx.Graph:
-                if has_name: del graph.name
-                graph = pyg_utils.to_networkx(graph).to_undirected()
-            if i < train_len:
-                train.append(graph)
-            else:
-                test.append(graph)
-    return train, test, task
+    if name not in _DATASET_LOADERS:
+        raise ValueError(
+            "未识别的数据集: {}。已注册数据集: {}".format(
+                name, list(_DATASET_LOADERS.keys())))
+    return _DATASET_LOADERS[name]()
+
+
+# ---------------------------------------------------------------------------
+# DataSource 体系
+# ---------------------------------------------------------------------------
 
 class DataSource:
-    def gen_batch(batch_target, batch_neg_target, batch_neg_query, train):
+    def gen_batch(self, batch_target, batch_neg_target, batch_neg_query, train):
         raise NotImplementedError
+
 
 class OTFSynDataSource(DataSource):
     """ 用于训练子图模型的在线生成合成数据。
@@ -151,17 +192,16 @@ class OTFSynDataSource(DataSource):
                     for v in graph.G.nodes:
                         graph.G.nodes[v]["node_feature"] = (torch.ones(1) if
                             anchor == v else torch.zeros(1))
-                        #print(v, graph.G.nodes[v]["node_feature"])
                 neigh = graph.G.subgraph(neigh)
                 if use_hard_neg and train:
                     neigh = neigh.copy()
-                    if random.random() < 1.0 or not self.node_anchored: # add edges
+                    if random.random() < 1.0 or not self.node_anchored:
                         non_edges = list(nx.non_edges(neigh))
                         if len(non_edges) > 0:
                             for u, v in random.sample(non_edges, random.randint(1,
                                 min(len(non_edges), 5))):
                                 neigh.add_edge(u, v)
-                    else:                         # perturb anchor
+                    else:
                         anchor = random.choice(list(neigh.nodes))
                         for v in neigh.nodes:
                             neigh.nodes[v]["node_feature"] = (torch.ones(1) if
@@ -182,10 +222,8 @@ class OTFSynDataSource(DataSource):
         pos_target = batch_target
         pos_target, pos_query = pos_target.apply_transform_multi(sample_subgraph)
         neg_target = batch_neg_target
-        # TODO: 使用困难负例
         hard_neg_idxs = set(random.sample(range(len(neg_target.G)),
             int(len(neg_target.G) * 1/2)))
-        #hard_neg_idxs = set()
         batch_neg_query = Batch.from_data_list(
             [DSGraph(self.generator.generate(size=len(g))
                 if i not in hard_neg_idxs else g)
@@ -210,8 +248,8 @@ class OTFSynDataSource(DataSource):
         pos_query = augmenter.augment(pos_query).to(utils.get_device())
         neg_target = augmenter.augment(neg_target).to(utils.get_device())
         neg_query = augmenter.augment(neg_query).to(utils.get_device())
-        #print(len(pos_target.G[0]), len(pos_query.G[0]))
         return pos_target, pos_query, neg_target, neg_query
+
 
 class OTFSynImbalancedDataSource(OTFSynDataSource):
     """ 不平衡的在线合成数据。
@@ -219,7 +257,6 @@ class OTFSynImbalancedDataSource(OTFSynDataSource):
     与平衡数据集不同，此数据源不使用 1:1 的正负例比例。
     而是从在线生成器中随机采样 2 个图，并记录该对的真实标签（是否为子图关系）。
     因此数据是不平衡的（子图关系较为罕见）。
-    该设置是一种具有挑战性的模型推理场景。
     """
     def __init__(self, max_size=29, min_size=5, n_workers=4,
         max_queue_size=256, node_anchored=False):
@@ -267,6 +304,7 @@ class OTFSynImbalancedDataSource(OTFSynDataSource):
         neg_b = utils.batch_nx_graphs(neg_b)
         self.batch_idx += 1
         return pos_a, pos_b, neg_a, neg_b
+
 
 class DiskDataSource(DataSource):
     """ 使用保存在数据集文件中的图集合来训练子图模型。
@@ -338,7 +376,7 @@ class DiskDataSource(DataSource):
             neigh_a, neigh_b = graph_a.subgraph(a), graph_b.subgraph(b)
             if filter_negs:
                 matcher = nx.algorithms.isomorphism.GraphMatcher(neigh_a, neigh_b)
-                if matcher.subgraph_is_isomorphic(): # a <= b (b is subgraph of a)
+                if matcher.subgraph_is_isomorphic():
                     continue
             neg_a.append(neigh_a)
             neg_b.append(neigh_b)
@@ -353,13 +391,12 @@ class DiskDataSource(DataSource):
             self.node_anchored else None)
         return pos_a, pos_b, neg_a, neg_b
 
+
 class DiskImbalancedDataSource(OTFSynDataSource):
     """ 不平衡的在线真实数据。
 
     与平衡数据集不同，此数据源不使用 1:1 的正负例比例。
     而是从在线生成器中随机采样 2 个图，并记录该对的真实标签（是否为子图关系）。
-    因此数据是不平衡的（子图关系较为罕见）。
-    该设置是一种具有挑战性的模型推理场景。
     """
     def __init__(self, dataset_name, max_size=29, min_size=5, n_workers=4,
         max_queue_size=256, node_anchored=False):
@@ -428,6 +465,40 @@ class DiskImbalancedDataSource(OTFSynDataSource):
         self.batch_idx += 1
         return pos_a, pos_b, neg_a, neg_b
 
+
+# ---------------------------------------------------------------------------
+# DataSource 工厂
+# ---------------------------------------------------------------------------
+
+def create_data_source(args):
+    """按 args.dataset 创建对应的 DataSource 实例。
+
+    将数据集分为两类：
+    - syn：在线生成的合成数据（OTFSyn*）；
+    - disk：磁盘上已有图数据集（Disk*）。
+
+    另外支持 balanced / imbalanced 两种采样方式。
+
+    原 subgraph_matching/train.py 中的 make_data_source 已合并至此。
+    """
+    toks = args.dataset.split("-")
+    if toks[0] == "syn":
+        if len(toks) == 1 or toks[1] == "balanced":
+            return OTFSynDataSource(node_anchored=args.node_anchored)
+        elif toks[1] == "imbalanced":
+            return OTFSynImbalancedDataSource(node_anchored=args.node_anchored)
+        else:
+            raise ValueError("未识别的数据集: {}".format(args.dataset))
+    else:
+        if len(toks) == 1 or toks[1] == "balanced":
+            return DiskDataSource(toks[0], node_anchored=args.node_anchored)
+        elif toks[1] == "imbalanced":
+            return DiskImbalancedDataSource(toks[0],
+                node_anchored=args.node_anchored)
+        else:
+            raise ValueError("未识别的数据集: {}".format(args.dataset))
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     plt.rcParams.update({"font.size": 14})
@@ -440,7 +511,6 @@ if __name__ == "__main__":
             nodes in neighs]
         path_length = [nx.average_shortest_path_length(graph.subgraph(nodes))
             for graph, nodes in neighs]
-        #plt.subplot(1, 2, i-9)
         plt.scatter(clustering, path_length, s=10, label=name)
     plt.legend()
     plt.savefig("plots/clustering-vs-path-length.png")

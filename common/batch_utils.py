@@ -4,7 +4,6 @@ from deepsnap.graph import Graph as DSGraph
 from deepsnap.batch import Batch
 
 from common.train_utils import get_device
-from common import feature_preprocess
 
 
 def batch_nx_graphs(graphs, anchors=None):
@@ -16,6 +15,9 @@ def batch_nx_graphs(graphs, anchors=None):
     返回：
         已迁移到当前设备的 DeepSNAP Batch。
     """
+    # 懒导入以避免 batch_utils → feature_preprocess → utils → batch_utils 循环
+    from common import feature_preprocess  # noqa: PLC0415
+
     augmenter = feature_preprocess.FeatureAugment()
 
     if anchors is not None:

@@ -1,34 +1,32 @@
+"""子图匹配（编码器训练）阶段参数注册。
+
+编码器结构参数（两阶段共用）通过 common.config_base.add_encoder_args 注入，
+本文件只保留训练阶段独有的参数：批大小、训练轮数、margin、数据集、
+评估频率、验证集大小、优化器调度器、worker 数量等。
+"""
 import argparse
+
+from common.config_base import add_encoder_args
 from common import utils
+
 
 def parse_encoder(parser, arg_str=None):
     """注册子图匹配（编码器）阶段参数。
 
-    该函数把训练/测试子图匹配模型所需参数添加到解析器，
-    并提供一组与原论文实现一致的默认值。SPMiner 也会复用这部分参数
-    （例如 method_type、model_path、hidden_dim）。
+    该函数先注入编码器结构参数（共用），再添加训练阶段独有参数，
+    并提供一组与原论文实现一致的默认值。
 
     参数：
         parser: argparse.ArgumentParser 实例。
         arg_str: 预留参数，当前实现未使用。
     """
-    enc_parser = parser.add_argument_group()
-    #utils.parse_optimizer(parser)
+    # 注入两阶段共用的编码器结构参数
+    add_encoder_args(parser)
 
-    enc_parser.add_argument('--conv_type', type=str,
-                        help='卷积类型')
-    enc_parser.add_argument('--method_type', type=str,
-                        help='嵌入类型')
+    # 训练阶段独有参数
+    enc_parser = parser.add_argument_group("训练阶段独有参数")
     enc_parser.add_argument('--batch_size', type=int,
                         help='训练批大小')
-    enc_parser.add_argument('--n_layers', type=int,
-                        help='图卷积层数')
-    enc_parser.add_argument('--hidden_dim', type=int,
-                        help='训练隐层维度')
-    enc_parser.add_argument('--skip', type=str,
-                        help='"all" 或 "last"')
-    enc_parser.add_argument('--dropout', type=float,
-                        help='Dropout 比率')
     enc_parser.add_argument('--n_batches', type=int,
                         help='训练小批次数量')
     enc_parser.add_argument('--margin', type=float,
@@ -41,12 +39,8 @@ def parse_encoder(parser, arg_str=None):
                         help='训练中评估频率')
     enc_parser.add_argument('--val_size', type=int,
                         help='验证集大小')
-    enc_parser.add_argument('--model_path', type=str,
-                        help='模型保存/加载路径')
     enc_parser.add_argument('--opt_scheduler', type=str,
                         help='调度器名称')
-    enc_parser.add_argument('--node_anchored', action="store_true",
-                        help='训练时是否使用节点锚定')
     enc_parser.add_argument('--test', action="store_true")
     enc_parser.add_argument('--n_workers', type=int)
     enc_parser.add_argument('--tag', type=str,
@@ -62,7 +56,7 @@ def parse_encoder(parser, arg_str=None):
                         skip="learnable",
                         dropout=0.0,
                         n_batches=1000000,
-                        opt='adam',   # opt_enc_parser
+                        opt='adam',
                         opt_scheduler='none',
                         opt_restart=100,
                         weight_decay=0.0,
@@ -75,7 +69,3 @@ def parse_encoder(parser, arg_str=None):
                         tag='',
                         val_size=4096,
                         node_anchored=True)
-
-    # 注意：这里不直接 parse，统一由外部主程序解析。
-    #return enc_parser.parse_args(arg_str)
-

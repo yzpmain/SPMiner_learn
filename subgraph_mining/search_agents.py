@@ -439,3 +439,31 @@ class GreedySearchAgent(SearchAgent):
             else:
                 print("未识别的排名方法")
         return cand_patterns_uniq
+
+
+# ---------------------------------------------------------------------------
+# 搜索代理注册表与工厂函数
+# 新增策略只需在 AGENT_REGISTRY 中添加一行，decoder.py 无需修改。
+# ---------------------------------------------------------------------------
+
+AGENT_REGISTRY: dict = {
+    "greedy": GreedySearchAgent,
+    "mcts":   MCTSSearchAgent,
+}
+
+
+def create_search_agent(strategy, *args, **kwargs):
+    """按策略名称创建搜索代理实例。
+
+    参数：
+        strategy: 策略名称，对应 AGENT_REGISTRY 中的键（如 "greedy"/"mcts"）。
+        *args / **kwargs: 透传给对应代理类的构造参数。
+    返回：
+        SearchAgent 子类实例。
+    """
+    if strategy not in AGENT_REGISTRY:
+        raise ValueError(
+            "未识别的搜索策略: {}。可选值: {}".format(
+                strategy, list(AGENT_REGISTRY.keys())))
+    return AGENT_REGISTRY[strategy](*args, **kwargs)
+

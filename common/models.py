@@ -17,6 +17,15 @@ import torch_geometric.utils as pyg_utils
 
 from common import utils
 from common import feature_preprocess
+from common.train_utils import get_device
+
+# ---------------------------------------------------------------------------
+# 卷积类型注册表：新增卷积只需在此处添加一行，无需修改 SkipLastGNN 内部。
+# 值为 callable(in_channels, out_channels) → MessagePassing 层。
+# 需要额外参数的类型（如 GIN、gated）使用 lambda 包装。
+# ---------------------------------------------------------------------------
+_CONV_REGISTRY: dict = {}  # 在模块底部填充，避免前向引用
+
 
 # GNN -> 拼接 -> MLP 图分类基线模型
 class BaselineMLP(nn.Module):
@@ -88,11 +97,11 @@ class OrderEmbedder(nn.Module):
         # e 表示违反序关系的程度：
         # 若 emb_bs <= emb_as 则该项越接近 0 越好。
         e = torch.sum(torch.max(torch.zeros_like(emb_as,
-            device=utils.get_device()), emb_bs - emb_as)**2, dim=1)
+            device=get_device()), emb_bs - emb_as)**2, dim=1)
 
         margin = self.margin
         e[labels == 0] = torch.max(torch.tensor(0.0,
-            device=utils.get_device()), margin - e)[labels == 0]
+            device=get_device()), margin - e)[labels == 0]
 
         relation_loss = torch.sum(e)
 
@@ -109,7 +118,7 @@ class SkipLastGNN(nn.Module):
         self.dropout = args.dropout
         self.n_layers = args.n_layers
 
-        if len(feature_preprocess.FEATURE_AUGMENT) > 0:
+        if len(feature_preprocess.DEFAULT_FEATURE_CONFIG.augment_methods) > 0:
             self.feat_preprocess = feature_preprocess.Preprocess(input_dim)
             input_dim = self.feat_preprocess.dim_out
         else:
@@ -157,27 +166,16 @@ class SkipLastGNN(nn.Module):
         self.conv_type = args.conv_type
 
     def build_conv_model(self, model_type, n_inner_layers):
-        """按配置返回具体图卷积层构造器。"""
-        if model_type == "GCN":
-            return pyg_nn.GCNConv
-        elif model_type == "GIN":
-            #return lambda i, h: pyg_nn.GINConv(nn.Sequential(
-            #    nn.Linear(i, h), nn.ReLU()))
-            return lambda i, h: GINConv(nn.Sequential(
-                nn.Linear(i, h), nn.ReLU(), nn.Linear(h, h)
-                ))
-        elif model_type == "SAGE":
-            return SAGEConv
-        elif model_type == "graph":
-            return pyg_nn.GraphConv
-        elif model_type == "GAT":
-            return pyg_nn.GATConv
-        elif model_type == "gated":
+        """从 _CONV_REGISTRY 中查找并返回卷积层构造器。
+
+        需要 n_inner_layers 的类型（如 gated）已在注册表中通过
+        闭包捕获该参数，外部无需关心。
+        """
+        if model_type == "gated":
             return lambda i, h: pyg_nn.GatedGraphConv(h, n_inner_layers)
-        elif model_type == "PNA":
-            return SAGEConv
-        else:
-            print("未识别的模型类型")
+        if model_type not in _CONV_REGISTRY:
+            raise ValueError("未识别的卷积类型: {}".format(model_type))
+        return _CONV_REGISTRY[model_type]
 
     def forward(self, data):
         # 如果启用了特征增强，会先对图节点特征做预处理。
@@ -314,4 +312,46 @@ class GINConv(pyg_nn.MessagePassing):
 
     def __repr__(self):
         return '{}(nn={})'.format(self.__class__.__name__, self.nn)
+
+
+# ---------------------------------------------------------------------------
+# 填充卷积注册表（放在所有类定义之后，避免前向引用）
+# 注册新类型只需在此添加一行：_CONV_REGISTRY["MyConv"] = MyConvClass
+# ---------------------------------------------------------------------------
+_CONV_REGISTRY.update({
+    "GCN":   pyg_nn.GCNConv,
+    "GIN":   lambda i, h: GINConv(nn.Sequential(
+                 nn.Linear(i, h), nn.ReLU(), nn.Linear(h, h))),
+    "SAGE":  SAGEConv,
+    "graph": pyg_nn.GraphConv,
+    "GAT":   pyg_nn.GATConv,
+    "PNA":   SAGEConv,   # PNA 复用 SAGEConv，三路聚合在 SkipLastGNN 中处理
+})
+
+
+def build_model(args):
+    """统一模型构建入口。
+
+    根据 args.method_type 创建对应的图嵌入模型，并在测试模式下加载权重。
+    供 subgraph_matching/train.py 和 subgraph_mining/decoder.py 共同调用。
+
+    参数：
+        args: 包含 method_type、hidden_dim、model_path、test 等字段的命名空间。
+    返回：
+        已移至目标设备的 nn.Module。
+    """
+    if args.method_type == "order":
+        model = OrderEmbedder(1, args.hidden_dim, args)
+    elif args.method_type == "mlp":
+        model = BaselineMLP(1, args.hidden_dim, args)
+    else:
+        raise ValueError(
+            "未识别的 method_type: {}。可选值: 'order', 'mlp'".format(
+                args.method_type))
+    model.to(get_device())
+    if getattr(args, "test", False) and getattr(args, "model_path", None):
+        import torch
+        model.load_state_dict(torch.load(args.model_path,
+            map_location=get_device()))
+    return model
 

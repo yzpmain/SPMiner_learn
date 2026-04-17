@@ -38,6 +38,35 @@ import networkx as nx
 import pickle
 
 
+def make_ppi_syn_dataset(n_graphs=20, n_nodes=500, m=10, seed=42):
+    """构造合成 PPI-like 数据集（无法下载真实 PPI 时的替代方案）。
+
+    蛋白质互作网络（PPI）具有无标度（scale-free）和高聚类系数特征，
+    可用 Barabási-Albert（BA）幂律簇图来近似：
+    - n_graphs : 生成图的数量（真实 PPI 训练集有 20 张图）
+    - n_nodes  : 每张图的节点数（真实 PPI 平均约 2000，此处缩小以加速测试）
+    - m        : BA 模型每步新增边数（越大图越稠密）
+
+    返回：networkx.Graph 列表。
+    """
+    rng = random.Random(seed)
+    graphs = []
+    for i in range(n_graphs):
+        # powerlaw_cluster_graph 比纯 BA 更接近 PPI 的高聚类系数
+        p_triangle = rng.uniform(0.3, 0.7)
+        g = nx.powerlaw_cluster_graph(n_nodes, m, p_triangle,
+                                      seed=seed + i)
+        # 确保连通
+        if not nx.is_connected(g):
+            components = list(nx.connected_components(g))
+            for comp in components[1:]:
+                u = rng.choice(list(components[0]))
+                v = rng.choice(list(comp))
+                g.add_edge(u, v)
+        graphs.append(g)
+    return graphs
+
+
 def make_plant_dataset(size):
     """构造带植入模式的合成图数据集。
 
@@ -303,6 +332,7 @@ _DECODER_DATASET_LOADERS = {
                                 "graph-truncate"),
     "coil":         lambda a: (_load_tu("COIL-DEL",     "/tmp/coil")),
     "ppi":          lambda a: (PPI(root="/tmp/PPI"),     "graph"),
+    "ppi-syn":      lambda a: (make_ppi_syn_dataset(),   "graph"),
     "facebook":     lambda a: ([utils.load_snap_edgelist(
                                     "data/facebook_combined.txt")], "graph"),
     "as-733":       lambda a: ([utils.load_snap_edgelist(

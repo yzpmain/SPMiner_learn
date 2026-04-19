@@ -36,15 +36,15 @@ from torch_geometric.datasets import TUDataset
 import torch_geometric.utils as pyg_utils
 import torch_geometric.nn as pyg_nn
 
-from common import data
-from common import models
-from common import utils
+from src.core import data
+from src.core import models
+from src.core import utils
 if HYPERPARAM_SEARCH:
     from test_tube import HyperOptArgumentParser
-    from subgraph_matching.hyp_search import parse_encoder
+    from src.subgraph_matching.hyp_search import parse_encoder
 else:
-    from subgraph_matching.config import parse_encoder
-from subgraph_matching.test import validation
+    from src.subgraph_matching.config import parse_encoder
+from src.subgraph_matching.test import validation
 
 def build_model(args):
     """根据命令行参数构建编码器模型，并在测试模式下加载权重。"""

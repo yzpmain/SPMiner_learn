@@ -8,9 +8,9 @@ from torch_geometric.datasets import TUDataset
 from torch_geometric.datasets import PPI
 import torch_geometric.utils as pyg_utils
 
-from common import data
-from common import utils
-from subgraph_mining import decoder
+from src.core import data
+from src.core import utils
+from src.subgraph_mining import decoder
 
 from multiprocessing import Pool
 import random
@@ -337,7 +337,7 @@ if __name__ == "__main__":
 
     if args.dataset == 'syn':
         # 使用合成数据集
-        from common import combined_syn
+        from src.core import combined_syn
         generator = combined_syn.get_generator([10])
         dataset = [generator.generate(size=10) for _ in range(10)]
     elif args.dataset == 'enzymes':

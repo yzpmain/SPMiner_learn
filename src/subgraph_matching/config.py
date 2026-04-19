@@ -1,5 +1,5 @@
 import argparse
-from common import utils
+from src.core import utils
 
 def parse_encoder(parser, arg_str=None):
     """注册子图匹配（编码器）阶段参数。

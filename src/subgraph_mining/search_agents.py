@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from tqdm import tqdm
-from common import utils
+from src.core import utils
 
 import matplotlib.pyplot as plt
 

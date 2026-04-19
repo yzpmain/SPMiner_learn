@@ -1,4 +1,4 @@
-from common import utils
+from src.core import utils
 from collections import defaultdict
 from datetime import datetime
 from sklearn.metrics import roc_auc_score, confusion_matrix
@@ -135,5 +135,5 @@ def validation(args, model, test_pts, logger, batch_n, epoch, verbose=False):
 
 if __name__ == "__main__":
     # 复用 train.py 的 main(force_test=True) 只做评估。
-    from subgraph_matching.train import main
+    from src.subgraph_matching.train import main
     main(force_test=True)

@@ -24,12 +24,12 @@ from torch_geometric.datasets import TUDataset
 import torch_geometric.utils as pyg_utils
 import torch_geometric.nn as pyg_nn
 
-from common import data
-from common import models
-from common import utils
-from subgraph_matching.config import parse_encoder
-from subgraph_matching.test import validation
-from subgraph_matching.train import build_model
+from src.core import data
+from src.core import models
+from src.core import utils
+from src.subgraph_matching.config import parse_encoder
+from src.subgraph_matching.test import validation
+from src.subgraph_matching.train import build_model
 
 def gen_alignment_matrix(model, query, target, method_type="order"):
     """为给定的查询图和目标图生成子图匹配对齐矩阵。

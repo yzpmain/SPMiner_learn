@@ -1,5 +1,5 @@
 import argparse
-from common import utils
+from src.core import utils
 
 def parse_decoder(parser):
     """注册 SPMiner 解码阶段参数。

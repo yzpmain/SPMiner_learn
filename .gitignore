@@ -10,7 +10,6 @@ runs/
 results/
 *.sw?
 orca/
-core
 deepsnap-experimental/
 ckpt/
 visuals/

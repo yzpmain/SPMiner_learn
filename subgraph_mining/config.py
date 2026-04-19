@@ -50,7 +50,7 @@ def parse_decoder(parser):
                         sample_method="tree",
                         skip="learnable",
                         min_pattern_size=5,
-                        max_pattern_size=20,
+                        max_pattern_size=8,
                         min_neighborhood_size=20,
                         max_neighborhood_size=29,
                         search_strategy="greedy",

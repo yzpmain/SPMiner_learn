@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from common import feature_preprocess
 
-def sample_neigh(graphs, size):
+def sample_neigh(graphs, size, max_attempts=100):
     """在图集合中按图大小加权采样一个连通邻域。
 
     采样步骤：
@@ -26,13 +26,15 @@ def sample_neigh(graphs, size):
     参数：
         graphs: networkx 图列表。
         size: 目标邻域节点数。
+        max_attempts: 最大尝试次数，防止无限循环。
     返回：
         (graph, neigh_nodes) 其中 neigh_nodes 为采样到的节点列表。
     """
     ps = np.array([len(g) for g in graphs], dtype=float)
     ps /= np.sum(ps)
     dist = stats.rv_discrete(values=(np.arange(len(graphs)), ps))
-    while True:
+
+    for attempt in range(max_attempts):
         idx = dist.rvs()
         #graph = random.choice(graphs)
         graph = graphs[idx]
@@ -50,6 +52,10 @@ def sample_neigh(graphs, size):
             frontier = [x for x in frontier if x not in visited]
         if len(neigh) == size:
             return graph, neigh
+
+    # 如果尝试多次都失败，返回最大的可连通子图
+    print(f"Warning: Could not sample neighborhood of size {size} after {max_attempts} attempts")
+    return graph, neigh
 
 cached_masks = None
 def vec_hash(v):

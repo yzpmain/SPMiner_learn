@@ -166,7 +166,7 @@ def pattern_growth(dataset, task, args):
             model, graphs, embs, node_anchored=args.node_anchored,
             analyze=args.analyze, model_type=args.method_type,
             out_batch_size=args.out_batch_size,
-            frontier_top_k=args.frontier_top_k)
+            frontier_top_k=args.frontier_top_k, max_steps=args.n_trials)
     out_graphs = agent.run_search(args.n_trials)
     print(time.time() - start_time, "TOTAL TIME")
     x = int(time.time() - start_time)
@@ -211,7 +211,12 @@ def main():
     args = parser.parse_args()
 
     print("Using dataset {}".format(args.dataset))
-    if args.dataset == 'enzymes':
+    if args.dataset.startswith('syn'):
+        # 使用合成数据集进行挖掘
+        generator = combined_syn.get_generator([10])
+        dataset = [generator.generate(size=10) for _ in range(10)]
+        task = 'graph'
+    elif args.dataset == 'enzymes':
         dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
         task = 'graph'
     elif args.dataset == 'cox2':

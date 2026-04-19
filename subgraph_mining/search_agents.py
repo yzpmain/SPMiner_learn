@@ -285,7 +285,7 @@ class GreedySearchAgent(SearchAgent):
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, rank_method="counts",
         model_type="order", out_batch_size=20, n_beams=1,
-        frontier_top_k=0):
+        frontier_top_k=0, max_steps=1000):
         """子图模式搜索的贪心实现。
         算法在每一步贪心地选择下一个节点进行扩展，同时保持模式
         被预测为频繁的。选择下一动作的标准取决于子图匹配模型预测的分数
@@ -303,10 +303,14 @@ class GreedySearchAgent(SearchAgent):
             frontier_top_k=frontier_top_k)
         self.rank_method = rank_method
         self.n_beams = n_beams
+        self.max_steps = max_steps
+        self.step_count = 0
         print("Rank Method:", rank_method)
+        print("Max Steps:", max_steps)
 
     def init_search(self):
         """初始化贪心搜索 beam。"""
+        self.step_count = 0
         ps = np.array([len(g) for g in self.dataset], dtype=float)
         ps /= np.sum(ps)
         graph_dist = stats.rv_discrete(values=(np.arange(len(self.dataset)), ps))
@@ -324,7 +328,7 @@ class GreedySearchAgent(SearchAgent):
         self.analyze_embs = []
 
     def is_search_done(self):
-        return len(self.beam_sets) == 0
+        return len(self.beam_sets) == 0 or self.step_count >= self.max_steps
 
     def step(self):
         """执行一轮贪心扩展。
@@ -332,6 +336,9 @@ class GreedySearchAgent(SearchAgent):
         对每个 beam 状态，枚举 frontier 候选节点，
         基于匹配模型分数选择最优扩展。
         """
+        self.step_count += 1
+        print(f"Step {self.step_count}/{self.max_steps}, Active beams: {len(self.beam_sets)}")
+
         new_beam_sets = []
         print("seeds come from", len(set(b[0][-1] for b in self.beam_sets)),
             "distinct graphs")

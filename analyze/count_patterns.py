@@ -5,6 +5,7 @@ import json
 import numpy as np
 
 from torch_geometric.datasets import TUDataset
+from torch_geometric.datasets import PPI
 import torch_geometric.utils as pyg_utils
 
 from common import data
@@ -334,7 +335,12 @@ if __name__ == "__main__":
     print("Using {} workers".format(args.n_workers))
     print("Baseline:", args.baseline)
 
-    if args.dataset == 'enzymes':
+    if args.dataset == 'syn':
+        # 使用合成数据集
+        from common import combined_syn
+        generator = combined_syn.get_generator([10])
+        dataset = [generator.generate(size=10) for _ in range(10)]
+    elif args.dataset == 'enzymes':
         dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
     elif args.dataset == 'cox2':
         dataset = TUDataset(root='/tmp/cox2', name='COX2')
@@ -349,6 +355,8 @@ if __name__ == "__main__":
             for row in reader:
                 graph.add_edge(int(row[0]), int(row[1]))
         dataset = [graph]
+    elif args.dataset == 'ppi':
+        dataset = PPI(root='/tmp/PPI')
     elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
         fn = {"diseasome": "bio-diseasome.mtx",
             "usroads": "road-usroads.mtx",

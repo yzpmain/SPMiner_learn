@@ -4,6 +4,7 @@ import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import os
+import csv
 
 def arg_parse():
     parser = argparse.ArgumentParser(description='统计图中的图元')
@@ -28,6 +29,7 @@ if __name__ == "__main__":
             all_counts[name] = graphlet_lens, n_matches
 
     all_labels, all_xs, all_ys, all_ub_ys, all_lb_ys = [], [], [], [], []
+    summary_rows = []
     for name, (sizes, counts) in all_counts.items():
         all_labels.append(name)
 
@@ -45,12 +47,23 @@ if __name__ == "__main__":
             #s = np.std(np.log10(matches_by_size[size]), ddof=1)
             #m = np.mean(np.log10(matches_by_size[size]))
             #a, b = m - s, m + s
-            a, b = np.percentile(np.log10(matches_by_size[size]), [25, 75])
+            # 避免 0 计数导致 log10 警告/inf。
+            safe_counts = np.maximum(np.array(matches_by_size[size], dtype=float), 1e-12)
+            a, b = np.percentile(np.log10(safe_counts), [25, 75])
 
             ub_ys.append(b)
             lb_ys.append(a)
             #ys.append(np.mean(np.log10(matches_by_size[size])))
-            ys.append(np.median(np.log10(matches_by_size[size])))
+            ys.append(np.median(np.log10(safe_counts)))
+
+            summary_rows.append({
+                "name": name,
+                "graph_size": int(size),
+                "n_patterns": int(len(matches_by_size[size])),
+                "median_frequency": float(np.power(10, ys[-1])),
+                "q1_frequency": float(np.power(10, a)),
+                "q3_frequency": float(np.power(10, b)),
+            })
 
         all_xs.append(list(sorted(matches_by_size.keys())))
         all_ys.append(ys)
@@ -77,3 +90,21 @@ if __name__ == "__main__":
     plt.yscale("log")
     plt.legend()
     plt.savefig("plots/pattern-counts.png")
+
+    out_dir = os.path.dirname(args.out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(args.out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "name",
+                "graph_size",
+                "n_patterns",
+                "median_frequency",
+                "q1_frequency",
+                "q3_frequency",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(summary_rows)

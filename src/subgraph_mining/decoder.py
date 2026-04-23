@@ -260,6 +260,11 @@ def main():
         size = int(args.dataset.split("-")[-1])
         dataset = make_plant_dataset(size)
         task = 'graph'
+    elif args.dataset.startswith("facebook_combined"):
+        # 支持 facebook_combined_200 等新 SNAP 边列表数据集
+        graph = utils.load_snap_edgelist(f"data/{args.dataset}.txt")
+        dataset = [graph]
+        task = 'graph'
     elif args.dataset == 'facebook':
         # 斯坦福 SNAP ego-Facebook 数据集
         # 请将 facebook_combined.txt 放置在 data/ 目录下

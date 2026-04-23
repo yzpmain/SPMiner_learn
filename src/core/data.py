@@ -52,6 +52,10 @@ def load_dataset(name):
         # 请将 facebook_combined.txt 放置在 data/ 目录下
         graph = utils.load_snap_edgelist("data/facebook_combined.txt")
         return [graph], [graph], "graph"
+    elif name.startswith("facebook_combined"):
+        # 支持 facebook_combined_200 等新 SNAP 边列表数据集
+        graph = utils.load_snap_edgelist(f"data/{name}.txt")
+        return [graph], [graph], "graph"
     elif name in ("as-733", "as20000102"):
         # 斯坦福 SNAP Autonomous Systems AS-733 数据集。
         # 这里默认使用数据集里节点和边都最多的一天快照（2000-01-02）。

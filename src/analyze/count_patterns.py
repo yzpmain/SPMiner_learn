@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import traceback
 
 import numpy as np
 
@@ -24,6 +25,17 @@ try:
 except ImportError:
     orca = None
 
+try:
+    from orbitsi.search import FilterEngine, OrderEngine, SearchEngine  # type: ignore[import-not-found]
+    import _evoke_cpp  # type: ignore[import-not-found]
+    ORBITSI_AVAILABLE = True
+except ImportError:
+    FilterEngine = None
+    OrderEngine = None
+    SearchEngine = None
+    _evoke_cpp = None
+    ORBITSI_AVAILABLE = False
+
 def arg_parse():
     parser = argparse.ArgumentParser(description='统计图中的图元')
     parser.add_argument('--dataset', type=str)
@@ -39,6 +51,8 @@ def arg_parse():
     parser.add_argument('--progress_every', type=int,
         help='每处理多少个任务打印一次进度，0 表示关闭')
     parser.add_argument('--node_anchored', action="store_true")
+    parser.add_argument('--use_orbitsi', action="store_true",
+        help='使用Orbitsi(orbit-filter + backtracking)加速同构搜索')
     parser.set_defaults(dataset="enzymes",
                         queries_path="results/out-patterns.p",
                         out_path="results/counts.json",
@@ -50,6 +64,92 @@ def arg_parse():
                         progress_every=1000)
                         #node_anchored=True)
     return parser.parse_args()
+
+class _EvokeOrbitCounterNoConverter:
+    """Minimal EVOKE counter that avoids OrbitSI package matrix-file dependency."""
+    def __init__(self, graph, size=4):
+        self.graph = graph
+        self.size = size
+        self.counts = None
+
+    def _nx_to_cpp_graph(self):
+        return {int(n): [int(nbr) for nbr in self.graph.neighbors(n)]
+            for n in self.graph.nodes}
+
+    def count_orbits(self):
+        cpp_graph = self._nx_to_cpp_graph()
+        self.counts = _evoke_cpp.evoke_count(cpp_graph, size=self.size,
+            parallel=True)
+        return self.counts
+
+    def get_orbits(self, induced=False):
+        if self.counts is None:
+            self.count_orbits()
+        sorted_nodes = sorted(self.counts)
+        return np.array([self.counts[node] for node in sorted_nodes], dtype=int)
+
+def _build_orbitsi_labeled_graph(graph, node_anchored=False, anchor_node=None):
+    """Build a copy with integer node labels required by OrbitSI filters."""
+    g = graph.copy()
+    nx.set_node_attributes(g, 1, name="label")
+    if node_anchored:
+        for node, attrs in g.nodes(data=True):
+            if attrs.get("anchor", 0) == 1:
+                g.nodes[node]["label"] = 2
+        if anchor_node is not None and anchor_node in g.nodes:
+            g.nodes[anchor_node]["label"] = 2
+    return g
+
+def _orbitsi_match_count(query, target, method, node_anchored, anchor_or_none):
+    """Return match count using OrbitSI pipeline.
+
+    Raises on any runtime issue so caller can safely fallback to NetworkX.
+    """
+    find_all = (method == "freq")
+    n = 0
+
+    if method == "bin" and node_anchored:
+        anchors = (target.nodes if anchor_or_none is None else [anchor_or_none])
+        query_labeled = _build_orbitsi_labeled_graph(query, node_anchored=True)
+        for anchor in anchors:
+            target_labeled = _build_orbitsi_labeled_graph(target,
+                node_anchored=True, anchor_node=anchor)
+            filter_engine = FilterEngine(data_graph=target_labeled,
+                pattern_graph=query_labeled,
+                orbit_counter_class=_EvokeOrbitCounterNoConverter,
+                graphlet_size=4)
+            pattern_orbits, candidate_sets, subgraph = filter_engine.run()
+            if not candidate_sets:
+                continue
+            order_engine = OrderEngine(query_labeled, pattern_orbits)
+            order, pivot = order_engine.run()
+            search_engine = SearchEngine(subgraph, query_labeled,
+                candidate_sets, order, pivot)
+            matches = search_engine.run(return_all=False)
+            if matches:
+                n += 1
+        return n
+
+    query_labeled = _build_orbitsi_labeled_graph(query,
+        node_anchored=(method == "bin" and node_anchored))
+    target_labeled = _build_orbitsi_labeled_graph(target,
+        node_anchored=(method == "bin" and node_anchored))
+    filter_engine = FilterEngine(data_graph=target_labeled,
+        pattern_graph=query_labeled,
+        orbit_counter_class=_EvokeOrbitCounterNoConverter,
+        graphlet_size=4)
+    pattern_orbits, candidate_sets, subgraph = filter_engine.run()
+    if not candidate_sets:
+        return 0
+    order_engine = OrderEngine(query_labeled, pattern_orbits)
+    order, pivot = order_engine.run()
+    search_engine = SearchEngine(subgraph, query_labeled,
+        candidate_sets, order, pivot)
+    matches = search_engine.run(return_all=find_all)
+
+    if method == "bin":
+        return int(bool(matches))
+    return len(matches)
 
 def gen_baseline_queries(queries, targets, method="mfinder",
     node_anchored=False):
@@ -165,7 +265,7 @@ def dedup_isomorphic_queries(queries, node_anchored=False):
     return unique_queries, orig_to_unique
 
 def count_graphlets_helper(inp):
-    i, query_info, target_info, method, node_anchored, anchor_or_none = inp
+    i, query_info, target_info, method, node_anchored, anchor_or_none, use_orbitsi = inp
     query = query_info["graph"]
     target = target_info["graph"]
 
@@ -195,32 +295,40 @@ def count_graphlets_helper(inp):
             return i, 0
 
     target = target.copy()
-    #print(i, j, len(target), n / n_symmetries)
-    #matcher = nx.isomorphism.ISMAGS(target, query)
-    if method == "bin":
-        if node_anchored:
-            for anchor in (target.nodes if anchor_or_none is None else
-                [anchor_or_none]):
-                #if random.random() > 0.1: continue
-                nx.set_node_attributes(target, 0, name="anchor")
-                target.nodes[anchor]["anchor"] = 1
-                matcher = iso.GraphMatcher(target, query,
-                    node_match=iso.categorical_node_match(["anchor"], [0]))
-                if matcher.subgraph_is_isomorphic():
-                    n += 1
-            #else:
-                #n_chances_left -= 1
-                #if n_chances_left < min_count:
-                #    return i, -1
-        else:
+
+    # Try OrbitSI first; fall back to NetworkX when unavailable or runtime fails.
+    used_orbitsi = False
+    if use_orbitsi and ORBITSI_AVAILABLE and method in ("bin", "freq"):
+        try:
+            n = _orbitsi_match_count(query, target, method, node_anchored,
+                anchor_or_none)
+            if method == "freq":
+                n_symmetries = query_info["n_symmetries"]
+                n = n / n_symmetries
+            used_orbitsi = True
+        except Exception:
+            used_orbitsi = False
+
+    if not used_orbitsi:
+        if method == "bin":
+            if node_anchored:
+                for anchor in (target.nodes if anchor_or_none is None else
+                    [anchor_or_none]):
+                    nx.set_node_attributes(target, 0, name="anchor")
+                    target.nodes[anchor]["anchor"] = 1
+                    matcher = iso.GraphMatcher(target, query,
+                        node_match=iso.categorical_node_match(["anchor"], [0]))
+                    if matcher.subgraph_is_isomorphic():
+                        n += 1
+            else:
+                matcher = iso.GraphMatcher(target, query)
+                n += int(matcher.subgraph_is_isomorphic())
+        elif method == "freq":
+            n_symmetries = query_info["n_symmetries"]
             matcher = iso.GraphMatcher(target, query)
-            n += int(matcher.subgraph_is_isomorphic())
-    elif method == "freq":
-        n_symmetries = query_info["n_symmetries"]
-        matcher = iso.GraphMatcher(target, query)
-        n += len(list(matcher.subgraph_isomorphisms_iter())) / n_symmetries
-    else:
-        print("计数方法不被识别")
+            n += len(list(matcher.subgraph_isomorphisms_iter())) / n_symmetries
+        else:
+            print("计数方法不被识别")
     #n_matches.append(n / n_symmetries)
     #print(i, n / n_symmetries)
     count = n# / n_symmetries
@@ -230,7 +338,8 @@ def count_graphlets_helper(inp):
     return i, count
 
 def count_graphlets(queries, targets, n_workers=1, method="bin",
-    node_anchored=False, min_count=0, chunksize=32, progress_every=1000):
+    node_anchored=False, min_count=0, chunksize=32, progress_every=1000,
+    use_orbitsi=False):
     print(len(queries), len(targets))
     #idxs, counts = zip(*[count_graphlets_helper((i, q, targets, include_bin))
     #    for i, q in enumerate(queries)])
@@ -253,11 +362,11 @@ def count_graphlets(queries, targets, n_workers=1, method="bin",
     n_matches = defaultdict(float)
     #for i, query in enumerate(work_queries):
     if node_anchored:
-        inp = [(i, query, target, method, node_anchored, anchor) for i, query
+        inp = [(i, query, target, method, node_anchored, anchor, use_orbitsi) for i, query
             in enumerate(work_queries) for target in targets for anchor in (target
                 ["graph"] if len(targets) < 10 else [None])]
     else:
-        inp = [(i, query, target, method, node_anchored, None) for i, query
+        inp = [(i, query, target, method, node_anchored, None, use_orbitsi) for i, query
             in enumerate(work_queries) for target in targets]
     print(len(inp))
     n_done = 0
@@ -321,7 +430,8 @@ def count_exact(queries, targets, args):
         node_anchored=args.node_anchored,
         min_count=10000,
         chunksize=args.chunksize,
-        progress_every=args.progress_every)
+        progress_every=args.progress_every,
+        use_orbitsi=getattr(args, 'use_orbitsi', False))
     counts6 = []
     num6 = 20#len([q for q in queries if len(q) == 6])
     for x in list(sorted(n_matches_baseline, reverse=True))[:num6]:
@@ -334,6 +444,11 @@ if __name__ == "__main__":
     args = arg_parse()
     print("Using {} workers".format(args.n_workers))
     print("Baseline:", args.baseline)
+    if args.use_orbitsi:
+        if ORBITSI_AVAILABLE:
+            print("Orbitsi backend: enabled (EVOKE)")
+        else:
+            print("Orbitsi backend: unavailable, fallback to NetworkX")
 
     if args.dataset == 'syn':
         # 使用合成数据集
@@ -380,6 +495,9 @@ if __name__ == "__main__":
         # 斯坦福 SNAP AS 路由图数据集（as20000102）
         # 请将 as20000102.txt 放置在 data/ 目录下
         dataset = [utils.load_snap_edgelist("data/as20000102.txt")]
+    elif args.dataset.startswith('facebook_combined'):
+        
+        dataset = [utils.load_snap_edgelist("data/{}.txt".format(args.dataset))]
     elif args.dataset.startswith('roadnet-'):
         # roadnet-* 使用 data/<dataset>.txt 的 tab/space 边列表。
         dataset = [utils.load_snap_edgelist("data/{}.txt".format(args.dataset))]
@@ -418,13 +536,15 @@ if __name__ == "__main__":
             n_workers=args.n_workers, method=args.count_method,
             node_anchored=args.node_anchored,
             chunksize=args.chunksize,
-            progress_every=args.progress_every)
+            progress_every=args.progress_every,
+            use_orbitsi=getattr(args, 'use_orbitsi', False))
     elif args.baseline == "none":
         n_matches = count_graphlets(queries, targets,
             n_workers=args.n_workers, method=args.count_method,
             node_anchored=args.node_anchored,
             chunksize=args.chunksize,
-            progress_every=args.progress_every)
+            progress_every=args.progress_every,
+            use_orbitsi=getattr(args, 'use_orbitsi', False))
     else:
         baseline_queries = gen_baseline_queries(queries, targets,
             node_anchored=args.node_anchored, method=args.baseline)
@@ -433,6 +553,7 @@ if __name__ == "__main__":
             n_workers=args.n_workers, method=args.count_method,
             node_anchored=args.node_anchored,
             chunksize=args.chunksize,
-            progress_every=args.progress_every)
+            progress_every=args.progress_every,
+            use_orbitsi=getattr(args, 'use_orbitsi', False))
     with open(args.out_path, "w") as f:
         json.dump((query_lens, n_matches, []), f)

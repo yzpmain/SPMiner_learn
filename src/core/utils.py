@@ -290,12 +290,17 @@ def build_optimizer(args, params):
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.opt_restart)
     return scheduler, optimizer
 
+_AUGMENTER: feature_preprocess.FeatureAugment | None = None
+
+def _get_augmenter() -> feature_preprocess.FeatureAugment:
+    global _AUGMENTER
+    if _AUGMENTER is None:
+        _AUGMENTER = feature_preprocess.FeatureAugment()
+    return _AUGMENTER
+
+
 def batch_nx_graphs(graphs, anchors=None):
-    #motifs_batch = [pyg_utils.from_networkx(
-    #    nx.convert_node_labels_to_integers(graph)) for graph in graphs]
-    #loader = DataLoader(motifs_batch, batch_size=len(motifs_batch))
-    #for b in loader: batch = b
-    augmenter = feature_preprocess.FeatureAugment()
+    augmenter = _get_augmenter()
     
     if anchors is not None:
         for anchor, g in zip(anchors, graphs):

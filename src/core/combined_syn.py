@@ -61,6 +61,8 @@ class WSGenerator(dataset.Generator):
 class BAGenerator(dataset.Generator):
     def __init__(self, sizes, **kwargs):
         super(BAGenerator, self).__init__(sizes, **kwargs)
+        self.max_p = 0.2
+        self.max_q = 0.2
 
     def generate(self, size=None):
         num_nodes = self._get_size(size)

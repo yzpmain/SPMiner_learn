@@ -10,12 +10,15 @@
 
 import argparse
 import os
+import queue as queue_mod
+import threading
 import time
 
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
 import torch.optim as optim
+from deepsnap.batch import Batch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.core import data
@@ -66,6 +69,21 @@ def make_data_source(args):
             raise Exception("Error: unrecognized dataset")
     return data_source
 
+def _prefetch_worker(data_source, loader_iter, prefetch_queue, cancel_event, max_batches):
+    """后台线程：在 GPU 计算的同时预取下一批数据。"""
+    for _ in range(max_batches):
+        if cancel_event.is_set():
+            return
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            return
+        if cancel_event.is_set():
+            return
+        result = data_source.gen_batch(*batch, True)
+        prefetch_queue.put(result)
+
+
 def train(args, model, logger, in_queue, out_queue):
     """训练序嵌入模型。
 
@@ -85,21 +103,43 @@ def train(args, model, logger, in_queue, out_queue):
         data_source = make_data_source(args)
         loaders = data_source.gen_data_loaders(args.eval_interval *
             args.batch_size, args.batch_size, train=True)
-        for batch_target, batch_neg_target, batch_neg_query in zip(*loaders):
+        loader_iter = iter(zip(*loaders))
+
+        # 启动预取线程：后台 CPU 采样，与 GPU 计算重叠
+        prefetch_queue: queue_mod.Queue = queue_mod.Queue()
+        cancel_event = threading.Event()
+        prefetcher = threading.Thread(
+            target=_prefetch_worker,
+            args=(data_source, loader_iter, prefetch_queue,
+                  cancel_event, args.eval_interval),
+            daemon=True,
+        )
+        prefetcher.start()
+
+        for _ in range(args.eval_interval):
             msg, _ = in_queue.get()
             if msg == "done":
+                cancel_event.set()
                 done = True
                 break
+
+            # 从预取队列获取（通常已有数据，无需等待）
+            pos_a, pos_b, neg_a, neg_b = prefetch_queue.get()
+
             # 训练单个 batch：正样本对子图关系应成立，负样本对不成立。
             model.train()
             model.zero_grad()
-            pos_a, pos_b, neg_a, neg_b = data_source.gen_batch(batch_target,
-                batch_neg_target, batch_neg_query, True)
-            emb_pos_a, emb_pos_b = model.emb_model(pos_a), model.emb_model(pos_b)
-            emb_neg_a, emb_neg_b = model.emb_model(neg_a), model.emb_model(neg_b)
-            emb_as = torch.cat((emb_pos_a, emb_neg_a), dim=0)
-            emb_bs = torch.cat((emb_pos_b, emb_neg_b), dim=0)
-            labels = torch.tensor([1]*pos_a.num_graphs + [0]*neg_a.num_graphs).to(
+
+            # 分别计算正负样本的嵌入
+            emb_as = model.emb_model(pos_a)
+            emb_bs = model.emb_model(pos_b)
+            neg_as = model.emb_model(neg_a)
+            neg_bs = model.emb_model(neg_b)
+            emb_as = torch.cat([emb_as, neg_as])
+            emb_bs = torch.cat([emb_bs, neg_bs])
+            n_pos = pos_a.num_graphs
+
+            labels = torch.tensor([1]*n_pos + [0]*neg_a.num_graphs).to(
                 utils.get_device())
             intersect_embs = None
             pred = model(emb_as, emb_bs)
@@ -111,7 +151,7 @@ def train(args, model, logger, in_queue, out_queue):
                 scheduler.step()
 
             if args.method_type == "order":
-                # order 模型用额外的分类器把“违反量”映射为二分类概率。
+                # order 模型用额外的分类器把"违反量"映射为二分类概率。
                 with torch.no_grad():
                     pred = model.predict(pred)
                 model.clf_model.zero_grad()
@@ -122,10 +162,10 @@ def train(args, model, logger, in_queue, out_queue):
                 clf_opt.step()
             pred = pred.argmax(dim=-1)
             acc = torch.mean((pred == labels).type(torch.float))
-            train_loss = loss.item()
-            train_acc = acc.item()
 
             out_queue.put(("step", (loss.item(), acc)))
+
+        cancel_event.set()
 
 def train_loop(args):
     """训练主循环：启动 worker、准备验证集并周期性评估。"""

@@ -49,7 +49,6 @@ class SearchAgent:
         self.model_type = model_type
         self.out_batch_size = out_batch_size
         self.frontier_top_k = frontier_top_k
-        self.cand_emb_cache = {}
 
     def run_search(self, n_trials=1000): 
         """统一搜索驱动器。
@@ -77,46 +76,21 @@ class SearchAgent:
         """
         raise NotImplementedError
 
-    def _candidate_cache_key(self, graph_idx, nodes, anchor_node=None):
-        """为候选子图生成稳定缓存键。"""
-        return graph_idx, frozenset(nodes), anchor_node if self.node_anchored else None
-
-    def _get_candidate_embs(self, graph_idx, graph, neigh, frontier):
-        """批量获取 frontier 对应候选子图的 embedding，并缓存重复状态。"""
-        cache_keys = []
+    def _get_candidate_embs(self, graph, neigh, frontier):
+        """批量获取 frontier 对应候选子图的 embedding。"""
         cand_graphs = []
         anchors = []
-        cand_nodes = []
-        cand_embs = [None] * len(frontier)
-        anchor_node = neigh[0] if self.node_anchored else None
+        for cand_node in frontier:
+            cand_graphs.append(graph.subgraph(list(neigh) + [cand_node]))
+            if self.node_anchored:
+                anchors.append(neigh[0])
 
-        for idx, cand_node in enumerate(frontier):
-            nodes = list(neigh) + [cand_node]
-            cache_key = self._candidate_cache_key(graph_idx, nodes, anchor_node)
-            cache_keys.append(cache_key)
-            cand_nodes.append(cand_node)
-            if cache_key in self.cand_emb_cache:
-                cand_embs[idx] = self.cand_emb_cache[cache_key]
-            else:
-                cand_graphs.append(graph.subgraph(nodes))
-                if self.node_anchored:
-                    anchors.append(anchor_node)
+        if not cand_graphs:
+            return []
 
-        if cand_graphs:
-            new_embs = self.model.emb_model(utils.batch_nx_graphs(
-                cand_graphs, anchors=anchors if self.node_anchored else None))
-            for cand_node, cache_key, emb in zip(
-                [n for i, n in enumerate(cand_nodes) if cand_embs[i] is None],
-                [k for i, k in enumerate(cache_keys) if cand_embs[i] is None],
-                new_embs,
-            ):
-                emb = emb.detach().cpu()
-                self.cand_emb_cache[cache_key] = emb
-
-        for idx, cache_key in enumerate(cache_keys):
-            if cand_embs[idx] is None:
-                cand_embs[idx] = self.cand_emb_cache[cache_key]
-        return cand_embs
+        cand_embs = self.model.emb_model(utils.batch_nx_graphs(
+            cand_graphs, anchors=anchors if self.node_anchored else None))
+        return [emb.detach() for emb in cand_embs]
 
     def _prune_frontier(self, graph, frontier):
         """按候选节点度数保留前 K 个 frontier 节点。"""
@@ -156,12 +130,9 @@ class MCTSSearchAgent(SearchAgent):
 
     # 返回从 start_node 起至少有 n 个可达节点
     def has_min_reachable_nodes(self, graph, start_node, n):
-        for depth_limit in range(n+1):
-            edges = nx.bfs_edges(graph, start_node, depth_limit=depth_limit)
-            nodes = set([v for u, v in edges])
-            if len(nodes) + 1 >= n:
-                return True
-        return False
+        edges = nx.bfs_edges(graph, start_node, depth_limit=n)
+        nodes = set([v for u, v in edges])
+        return len(nodes) + 1 >= n
 
     def step(self):
         """执行一轮 MCTS 扩展与价值回传。"""
@@ -212,15 +183,14 @@ class MCTSSearchAgent(SearchAgent):
             state_list = [cur_state]
             while frontier and len(neigh) < self.max_size:
                 frontier = self._prune_frontier(graph, frontier)
-                cand_embs = self._get_candidate_embs(graph_idx, graph, neigh,
+                cand_embs = self._get_candidate_embs(graph, neigh,
                     frontier)
                 best_v_score, best_node_score, best_node = 0, -float("inf"), None
                 for cand_node, cand_emb in zip(frontier, cand_embs):
-                    cand_emb = cand_emb.to(utils.get_device())
                     score, n_embs = 0, 0
                     for emb_batch in self.embs:
                         score += torch.sum(self.model.predict((
-                            emb_batch.to(utils.get_device()), cand_emb))).item()
+                            emb_batch, cand_emb))).item()
                         n_embs += len(emb_batch)
                     v_score = -np.log(score/n_embs + 1) + 1
                     # 获取下一状态的 WL 哈希值
@@ -349,22 +319,21 @@ class GreedySearchAgent(SearchAgent):
                 graph = self.dataset[graph_idx]
                 if len(neigh) >= self.max_pattern_size or not frontier: continue
                 frontier = self._prune_frontier(graph, frontier)
-                cand_embs = self._get_candidate_embs(graph_idx, graph, neigh,
+                cand_embs = self._get_candidate_embs(graph, neigh,
                     frontier)
                 best_score, best_node = float("inf"), None
                 for cand_node, cand_emb in zip(frontier, cand_embs):
-                    cand_emb = cand_emb.to(utils.get_device())
                     score, n_embs = 0, 0
                     for emb_batch in self.embs:
                         n_embs += len(emb_batch)
                         if self.model_type == "order":
                             score -= torch.sum(torch.argmax(
                                 self.model.clf_model(self.model.predict((
-                                emb_batch.to(utils.get_device()),
+                                emb_batch,
                                 cand_emb)).unsqueeze(1)), axis=1)).item()
                         elif self.model_type == "mlp":
                             score += torch.sum(self.model(
-                                emb_batch.to(utils.get_device()),
+                                emb_batch,
                                 cand_emb.unsqueeze(0).expand(len(emb_batch), -1)
                                 )[:,0]).item()
                         else:

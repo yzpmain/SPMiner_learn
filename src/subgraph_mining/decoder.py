@@ -132,7 +132,6 @@ def pattern_growth(dataset, task, args):
             batch = utils.batch_nx_graphs(batch_neighs,
                 anchors=anchors if args.node_anchored else None)
             emb = model.emb_model(batch)
-            emb = emb.to(torch.device("cpu"))
         embs.append(emb)
 
     if args.analyze:

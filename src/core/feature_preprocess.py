@@ -1,27 +1,8 @@
-import os
-import pickle
-import random
 import networkx as nx
 import numpy as np
-from sklearn.manifold import TSNE
 import torch
 import torch.nn as nn
-import torch.multiprocessing as mp
-import torch.nn.functional as F
-import torch.optim as optim
-from torch_geometric.data import DataLoader
-from torch_geometric.datasets import TUDataset, PPI, QM9
-import torch_geometric.utils as pyg_utils
-import torch_geometric.nn as pyg_nn
-from tqdm import tqdm
-import queue
-from deepsnap.dataset import GraphDataset
-from deepsnap.batch import Batch
-from deepsnap.graph import Graph as DSGraph
-#import orca
 from torch_scatter import scatter_add
-
-from src.core import utils
 
 AUGMENT_METHOD = "concat"
 FEATURE_AUGMENT, FEATURE_AUGMENT_DIMS = [], []
@@ -141,7 +122,7 @@ class FeatureAugment(nn.Module):
             "motif_counts": motif_counts_fun,
             "identity": identity_fun}
 
-    def register_feature_fun(name, feature_fun):
+    def register_feature_fun(self, name, feature_fun):
         self.node_feature_funs[name] = feature_fun
 
     @staticmethod

@@ -7,43 +7,21 @@
 4. 周期性调用验证函数并保存 checkpoint。
 """
 
-# 将此标志设置为 True 以使用超参数优化
-# 使用 Testtube 进行超参数调优
-HYPERPARAM_SEARCH = False
-HYPERPARAM_SEARCH_N_TRIALS = None   # 要运行多少次网格搜索试验
-                                    #    （设置为 None 表示穷举搜索）
 
 import argparse
-from itertools import permutations
-import pickle
-from queue import PriorityQueue
 import os
-import random
 import time
 
-from deepsnap.batch import Batch
-import networkx as nx
-import numpy as np
-from sklearn.manifold import TSNE
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch_geometric.data import DataLoader
-from torch_geometric.datasets import TUDataset
-import torch_geometric.utils as pyg_utils
-import torch_geometric.nn as pyg_nn
 
 from src.core import data
 from src.core import models
 from src.core import utils
-if HYPERPARAM_SEARCH:
-    from test_tube import HyperOptArgumentParser
-    from src.subgraph_matching.hyp_search import parse_encoder
-else:
-    from src.subgraph_matching.config import parse_encoder
+from src.subgraph_matching.config import parse_encoder
 from src.subgraph_matching.test import validation
 
 def build_model(args):
@@ -228,9 +206,7 @@ def main(force_test=False):
     - 测试模式：只跑验证逻辑，不更新参数。
     """
     mp.set_start_method("spawn", force=True)
-    parser = (argparse.ArgumentParser(description='序嵌入参数')
-        if not HYPERPARAM_SEARCH else
-        HyperOptArgumentParser(strategy='grid_search'))
+    parser = argparse.ArgumentParser(description='序嵌入参数')
 
     utils.parse_optimizer(parser)
     parse_encoder(parser)
@@ -239,14 +215,7 @@ def main(force_test=False):
     if force_test:
         args.test = True
 
-    # 当前实现保留了超参数搜索的兼容入口；默认情况下不启用。
-    if HYPERPARAM_SEARCH:
-        for i, hparam_trial in enumerate(args.trials(HYPERPARAM_SEARCH_N_TRIALS)):
-            print("Running hyperparameter search trial", i)
-            print(hparam_trial)
-            train_loop(hparam_trial)
-    else:
-        train_loop(args)
+    train_loop(args)
 
 if __name__ == '__main__':
     main()

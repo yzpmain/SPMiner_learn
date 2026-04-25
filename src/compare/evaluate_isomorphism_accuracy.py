@@ -5,55 +5,12 @@ from typing import Dict, List, Tuple
 
 import networkx as nx
 import pandas as pd
-import pickle
+
+from src.core.utils import parse_gspan_output, load_spminer_pickle
 
 
 PAIR_RE = re.compile(r"n(?P<n>\d+)_k(?P<k>\d+)")
 
-
-def parse_gspan_output(file_path: Path) -> List[nx.Graph]:
-    graphs: List[nx.Graph] = []
-    current = None
-
-    for raw in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-
-        if line.startswith("t "):
-            if current is not None and current.number_of_nodes() > 0:
-                graphs.append(current)
-            current = nx.Graph()
-            continue
-
-        if line.startswith("v ") and current is not None:
-            toks = line.split()
-            if len(toks) >= 3:
-                node_id = int(toks[1])
-                label = toks[2]
-                current.add_node(node_id, label=label)
-            continue
-
-        if line.startswith("e ") and current is not None:
-            toks = line.split()
-            if len(toks) >= 4:
-                u = int(toks[1])
-                v = int(toks[2])
-                label = toks[3]
-                current.add_edge(u, v, label=label)
-            continue
-
-    if current is not None and current.number_of_nodes() > 0:
-        graphs.append(current)
-    return graphs
-
-
-def load_spminer_pickle(file_path: Path) -> List[nx.Graph]:
-    with file_path.open("rb") as f:
-        obj = pickle.load(f)
-    if isinstance(obj, list):
-        return obj
-    raise ValueError(f"Unsupported SPMiner result format in {file_path}")
 
 
 def key_of_file(file_path: Path) -> Tuple[int, int] | None:

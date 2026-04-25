@@ -34,16 +34,7 @@ def make_plant_dataset(size):
     generator = combined_syn.get_generator([size])
     random.seed(3001)
     np.random.seed(14853)
-    # 模式 1
     pattern = generator.generate(size=10)
-    # 模式 2
-    #pattern = nx.star_graph(9)
-    # 模式 3
-    #pattern = nx.complete_graph(10)
-    # 模式 4
-    #pattern = nx.Graph()
-    #pattern.add_edges_from([(1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
-    #    (6, 7), (7, 2), (7, 8), (8, 9), (9, 10), (10, 6)])
     nx.draw(pattern, with_labels=True)
     plt.savefig("plots/cluster/plant-pattern.png")
     plt.close()
@@ -70,9 +61,7 @@ def pattern_growth(dataset, task, args):
     5. 保存可视化与序列化结果。
     """
     # 初始化模型
-    if args.method_type == "end2end":
-        model = models.End2EndOrder(1, args.hidden_dim, args)
-    elif args.method_type == "mlp":
+    if args.method_type == "mlp":
         model = models.BaselineMLP(1, args.hidden_dim, args)
     else:
         model = models.OrderEmbedder(1, args.hidden_dim, args)
@@ -84,9 +73,10 @@ def pattern_growth(dataset, task, args):
     if task == "graph-labeled":
         dataset, labels = dataset
 
+    start_time = time.time()
     # 将不同来源数据统一为 networkx.Graph 列表，
     # 便于后续采样和搜索器逻辑复用。
-    neighs_pyg, neighs = [], []
+    neighs = []
     print(len(dataset), "graphs")
     print("search strategy:", args.search_strategy)
     if task == "graph-labeled": print("using label 0")
@@ -124,7 +114,6 @@ def pattern_growth(dataset, task, args):
                         neighs.append(neigh)
         elif args.sample_method == "tree":
             # tree 采样：每次从数据集中随机抽图，再扩展一个连通邻域。
-            start_time = time.time()
             for j in tqdm(range(args.n_neighborhoods)):
                 graph, neigh = utils.sample_neigh(graphs,
                     random.randint(args.min_neighborhood_size,
@@ -137,17 +126,13 @@ def pattern_growth(dataset, task, args):
                     anchors.append(0)   # after converting labels, 0 will be anchor
 
     embs = []
-    if len(neighs) % args.batch_size != 0:
-        print("WARNING: number of graphs not multiple of batch size")
-    for i in range(len(neighs) // args.batch_size):
-        #top = min(len(neighs), (i+1)*args.batch_size)
-        top = (i+1)*args.batch_size
+    for i in range(0, len(neighs), args.batch_size):
+        batch_neighs = neighs[i:i+args.batch_size]
         with torch.no_grad():
-            batch = utils.batch_nx_graphs(neighs[i*args.batch_size:top],
+            batch = utils.batch_nx_graphs(batch_neighs,
                 anchors=anchors if args.node_anchored else None)
             emb = model.emb_model(batch)
             emb = emb.to(torch.device("cpu"))
-
         embs.append(emb)
 
     if args.analyze:

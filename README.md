@@ -318,6 +318,33 @@ python -m src.analyze.count_patterns --dataset=facebook --out_path=results/count
 python -m src.analyze.analyze_pattern_counts --counts_path=results/
 ```
 
+## Tkinter 图形界面
+
+项目新增了单窗口多选项卡 GUI，适合用可视化方式执行常见流程：
+
+- `Help`：查看项目功能说明（自动发现 CLI 模块 + README 片段）。
+- `Data`：浏览 `data/`、`plots/`、`results/` 文件并预览文本/图片。
+- `Train`：训练参数输入与运行。
+- `Test`：评估参数输入与运行。
+- `Mining`：挖掘参数输入与运行。
+- `Analysis`：计数与统计分析任务运行。
+
+运行时输出会实时显示在窗口下方日志区，且支持取消当前任务。
+
+注意：GUI 对原始数据文件是只读的，不提供覆盖或保存 `data/` 中文件的操作。
+
+启动命令：
+
+```bash
+python -m src.gui.main_window
+```
+
+可选依赖（增强图片预览）：
+
+```bash
+pip install Pillow
+```
+
 ## 数据文件说明
 
 `data/` 目录下放的是本地可直接读取的数据文件，例如：

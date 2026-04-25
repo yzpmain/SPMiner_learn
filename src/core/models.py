@@ -4,11 +4,6 @@
 1. 子图匹配任务的编码器训练；
 2. SPMiner 解码阶段的嵌入计算与打分。
 """
-from functools import reduce
-import random
-
-import networkx as nx
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -152,7 +147,6 @@ class SkipLastGNN(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 256), nn.ReLU(),
             nn.Linear(256, hidden_dim))
-        #self.batch_norm = nn.BatchNorm1d(output_dim, eps=1e-5, momentum=0.1)
         self.skip = args.skip
         self.conv_type = args.conv_type
 
@@ -161,8 +155,6 @@ class SkipLastGNN(nn.Module):
         if model_type == "GCN":
             return pyg_nn.GCNConv
         elif model_type == "GIN":
-            #return lambda i, h: pyg_nn.GINConv(nn.Sequential(
-            #    nn.Linear(i, h), nn.ReLU()))
             return lambda i, h: GINConv(nn.Sequential(
                 nn.Linear(i, h), nn.ReLU(), nn.Linear(h, h)
                 ))
@@ -221,8 +213,6 @@ class SkipLastGNN(nn.Module):
         # 通过全图池化得到图级表示，再用后端 MLP 映射到最终嵌入空间。
         emb = pyg_nn.global_add_pool(emb, batch)
         emb = self.post_mp(emb)
-        #emb = self.batch_norm(emb)   # TODO: test
-        #out = F.log_softmax(emb, dim=1)
         return emb
 
     def loss(self, pred, label):
@@ -271,12 +261,6 @@ class SAGEConv(pyg_nn.MessagePassing):
         aggr_out = self.lin_update(aggr_out)
         #aggr_out = torch.matmul(aggr_out, self.weight)
 
-        #if self.bias is not None:
-        #    aggr_out = aggr_out + self.bias
-
-        #if self.normalize:
-        #    aggr_out = F.normalize(aggr_out, p=2, dim=-1)
-
         return aggr_out
 
     def __repr__(self):
@@ -297,7 +281,6 @@ class GINConv(pyg_nn.MessagePassing):
         self.reset_parameters()
 
     def reset_parameters(self):
-        #reset(self.nn)
         self.eps.data.fill_(self.initial_eps)
 
     def forward(self, x, edge_index, edge_weight=None):

@@ -2,14 +2,15 @@ from collections import defaultdict, Counter
 
 from deepsnap.graph import Graph as DSGraph
 from deepsnap.batch import Batch
-from deepsnap.dataset import GraphDataset
 import torch
 import torch.optim as optim
-import torch_geometric.utils as pyg_utils
-from torch_geometric.data import DataLoader
 import networkx as nx
 import numpy as np
 import random
+import pickle
+import re
+from pathlib import Path
+from typing import List
 import scipy.stats as stats
 from tqdm import tqdm
 
@@ -305,3 +306,51 @@ def batch_nx_graphs(graphs, anchors=None):
     batch = augmenter.augment(batch)
     batch = batch.to(get_device())
     return batch
+
+
+def parse_gspan_output(file_path: Path) -> List[nx.Graph]:
+    """解析 gSpan 文本输出为 NetworkX 图列表。"""
+    graphs: List[nx.Graph] = []
+    current = None
+
+    for raw in file_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+
+        if line.startswith("t "):
+            if current is not None and current.number_of_nodes() > 0:
+                graphs.append(current)
+            current = nx.Graph()
+            continue
+
+        if line.startswith("v ") and current is not None:
+            toks = line.split()
+            if len(toks) >= 3:
+                current.add_node(int(toks[1]), label=toks[2])
+            continue
+
+        if line.startswith("e ") and current is not None:
+            toks = line.split()
+            if len(toks) >= 4:
+                current.add_edge(int(toks[1]), int(toks[2]), label=toks[3])
+            continue
+
+        if line.lower().startswith("support") and current is not None:
+            try:
+                current.graph["support"] = float(line.split(":", 1)[1].strip())
+            except Exception:
+                pass
+
+    if current is not None and current.number_of_nodes() > 0:
+        graphs.append(current)
+    return graphs
+
+
+def load_spminer_pickle(file_path: Path) -> List[nx.Graph]:
+    """加载 SPMiner pickle 输出为 NetworkX 图列表。"""
+    with file_path.open("rb") as f:
+        obj = pickle.load(f)
+    if isinstance(obj, list):
+        return obj
+    raise ValueError(f"Unsupported SPMiner result format in {file_path}")

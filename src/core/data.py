@@ -18,6 +18,53 @@ from src.core import combined_syn
 from src.core import feature_preprocess
 from src.core import utils
 
+
+def _imbalanced_add_anchor(g, node_anchored):
+    """为不平衡数据源的 anchor 节点添加特征标记。"""
+    anchor = random.choice(list(g.G.nodes))
+    for v in g.G.nodes:
+        g.G.nodes[v]["node_feature"] = (torch.ones(1) if anchor == v
+            or not node_anchored else torch.zeros(1))
+    return g
+
+
+def _imbalanced_gen_batch_impl(self, graphs_a, graphs_b, _, train, cache_fn):
+    """OTFSynImbalancedDataSource 和 DiskImbalancedDataSource 共享的 gen_batch 实现。"""
+    pos_a, pos_b, neg_a, neg_b = [], [], [], []
+    if not os.path.exists(cache_fn):
+        graphs_a = graphs_a.apply_transform(
+            lambda g: _imbalanced_add_anchor(g, self.node_anchored))
+        graphs_b = graphs_b.apply_transform(
+            lambda g: _imbalanced_add_anchor(g, self.node_anchored))
+        for graph_a, graph_b in tqdm(list(zip(graphs_a.G, graphs_b.G))):
+            matcher = nx.algorithms.isomorphism.GraphMatcher(graph_a, graph_b,
+                node_match=(lambda a, b: (a["node_feature"][0] > 0.5) ==
+                    (b["node_feature"][0] > 0.5)) if self.node_anchored else None)
+            if matcher.subgraph_is_isomorphic():
+                pos_a.append(graph_a)
+                pos_b.append(graph_b)
+            else:
+                neg_a.append(graph_a)
+                neg_b.append(graph_b)
+        if not os.path.exists("data/cache"):
+            os.makedirs("data/cache")
+        with open(cache_fn, "wb") as f:
+            pickle.dump((pos_a, pos_b, neg_a, neg_b), f)
+        print("saved", cache_fn)
+    else:
+        with open(cache_fn, "rb") as f:
+            print("loaded", cache_fn)
+            pos_a, pos_b, neg_a, neg_b = pickle.load(f)
+    print(len(pos_a), len(neg_a))
+    if pos_a:
+        pos_a = utils.batch_nx_graphs(pos_a)
+        pos_b = utils.batch_nx_graphs(pos_b)
+    neg_a = utils.batch_nx_graphs(neg_a)
+    neg_b = utils.batch_nx_graphs(neg_b)
+    self.batch_idx += 1
+    return pos_a, pos_b, neg_a, neg_b
+
+
 def load_dataset(name):
     """ 加载 PyTorch Geometric 中提供的真实世界数据集。
 
@@ -155,21 +202,14 @@ class OTFSynDataSource(DataSource):
                     for v in graph.G.nodes:
                         graph.G.nodes[v]["node_feature"] = (torch.ones(1) if
                             anchor == v else torch.zeros(1))
-                        #print(v, graph.G.nodes[v]["node_feature"])
                 neigh = graph.G.subgraph(neigh)
                 if use_hard_neg and train:
                     neigh = neigh.copy()
-                    if random.random() < 1.0 or not self.node_anchored: # add edges
-                        non_edges = list(nx.non_edges(neigh))
-                        if len(non_edges) > 0:
-                            for u, v in random.sample(non_edges, random.randint(1,
-                                min(len(non_edges), 5))):
-                                neigh.add_edge(u, v)
-                    else:                         # perturb anchor
-                        anchor = random.choice(list(neigh.nodes))
-                        for v in neigh.nodes:
-                            neigh.nodes[v]["node_feature"] = (torch.ones(1) if
-                                anchor == v else torch.zeros(1))
+                    non_edges = list(nx.non_edges(neigh))
+                    if len(non_edges) > 0:
+                        for u, v in random.sample(non_edges, random.randint(1,
+                            min(len(non_edges), 5))):
+                            neigh.add_edge(u, v)
 
                 if (filter_negs and train and len(neigh) <= 6 and neg_target is
                     not None):
@@ -232,45 +272,9 @@ class OTFSynImbalancedDataSource(OTFSynDataSource):
         self.batch_idx = 0
 
     def gen_batch(self, graphs_a, graphs_b, _, train):
-        def add_anchor(g):
-            anchor = random.choice(list(g.G.nodes))
-            for v in g.G.nodes:
-                g.G.nodes[v]["node_feature"] = (torch.ones(1) if anchor == v
-                    or not self.node_anchored else torch.zeros(1))
-            return g
-        pos_a, pos_b, neg_a, neg_b = [], [], [], []
         fn = "data/cache/imbalanced-{}-{}".format(str(self.node_anchored),
             self.batch_idx)
-        if not os.path.exists(fn):
-            graphs_a = graphs_a.apply_transform(add_anchor)
-            graphs_b = graphs_b.apply_transform(add_anchor)
-            for graph_a, graph_b in tqdm(list(zip(graphs_a.G, graphs_b.G))):
-                matcher = nx.algorithms.isomorphism.GraphMatcher(graph_a, graph_b,
-                    node_match=(lambda a, b: (a["node_feature"][0] > 0.5) ==
-                    (b["node_feature"][0] > 0.5)) if self.node_anchored else None)
-                if matcher.subgraph_is_isomorphic():
-                    pos_a.append(graph_a)
-                    pos_b.append(graph_b)
-                else:
-                    neg_a.append(graph_a)
-                    neg_b.append(graph_b)
-            if not os.path.exists("data/cache"):
-                os.makedirs("data/cache")
-            with open(fn, "wb") as f:
-                pickle.dump((pos_a, pos_b, neg_a, neg_b), f)
-            print("saved", fn)
-        else:
-            with open(fn, "rb") as f:
-                print("loaded", fn)
-                pos_a, pos_b, neg_a, neg_b = pickle.load(f)
-        print(len(pos_a), len(neg_a))
-        if pos_a:
-            pos_a = utils.batch_nx_graphs(pos_a)
-            pos_b = utils.batch_nx_graphs(pos_b)
-        neg_a = utils.batch_nx_graphs(neg_a)
-        neg_b = utils.batch_nx_graphs(neg_b)
-        self.batch_idx += 1
-        return pos_a, pos_b, neg_a, neg_b
+        return _imbalanced_gen_batch_impl(self, graphs_a, graphs_b, _, train, fn)
 
 class DiskDataSource(DataSource):
     """ 使用保存在数据集文件中的图集合来训练子图模型。
@@ -392,45 +396,9 @@ class DiskImbalancedDataSource(OTFSynDataSource):
         return loaders
 
     def gen_batch(self, graphs_a, graphs_b, _, train):
-        def add_anchor(g):
-            anchor = random.choice(list(g.G.nodes))
-            for v in g.G.nodes:
-                g.G.nodes[v]["node_feature"] = (torch.ones(1) if anchor == v
-                    or not self.node_anchored else torch.zeros(1))
-            return g
-        pos_a, pos_b, neg_a, neg_b = [], [], [], []
         fn = "data/cache/imbalanced-{}-{}-{}".format(self.dataset_name.lower(),
             str(self.node_anchored), self.batch_idx)
-        if not os.path.exists(fn):
-            graphs_a = graphs_a.apply_transform(add_anchor)
-            graphs_b = graphs_b.apply_transform(add_anchor)
-            for graph_a, graph_b in tqdm(list(zip(graphs_a.G, graphs_b.G))):
-                matcher = nx.algorithms.isomorphism.GraphMatcher(graph_a, graph_b,
-                    node_match=(lambda a, b: (a["node_feature"][0] > 0.5) ==
-                    (b["node_feature"][0] > 0.5)) if self.node_anchored else None)
-                if matcher.subgraph_is_isomorphic():
-                    pos_a.append(graph_a)
-                    pos_b.append(graph_b)
-                else:
-                    neg_a.append(graph_a)
-                    neg_b.append(graph_b)
-            if not os.path.exists("data/cache"):
-                os.makedirs("data/cache")
-            with open(fn, "wb") as f:
-                pickle.dump((pos_a, pos_b, neg_a, neg_b), f)
-            print("saved", fn)
-        else:
-            with open(fn, "rb") as f:
-                print("loaded", fn)
-                pos_a, pos_b, neg_a, neg_b = pickle.load(f)
-        print(len(pos_a), len(neg_a))
-        if pos_a:
-            pos_a = utils.batch_nx_graphs(pos_a)
-            pos_b = utils.batch_nx_graphs(pos_b)
-        neg_a = utils.batch_nx_graphs(neg_a)
-        neg_b = utils.batch_nx_graphs(neg_b)
-        self.batch_idx += 1
-        return pos_a, pos_b, neg_a, neg_b
+        return _imbalanced_gen_batch_impl(self, graphs_a, graphs_b, _, train, fn)
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt

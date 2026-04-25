@@ -2,27 +2,14 @@
 子图匹配模型需要使用节点锚定选项进行训练（默认）。"""
 
 import argparse
-from itertools import permutations
-import pickle
-from queue import PriorityQueue
 import os
+import pickle
 import random
-import time
 
-from deepsnap.batch import Batch
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-from sklearn.manifold import TSNE
 import torch
-import torch.nn as nn
-import torch.multiprocessing as mp
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
-from torch_geometric.data import DataLoader
-from torch_geometric.datasets import TUDataset
-import torch_geometric.utils as pyg_utils
-import torch_geometric.nn as pyg_nn
 
 from src.core import data
 from src.core import models
@@ -96,6 +83,5 @@ def main():
     print("Saved alignment matrix plot in plots/alignment.png")
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
     main()
 

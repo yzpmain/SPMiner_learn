@@ -49,8 +49,6 @@ def arg_parse():
     parser.add_argument('--baseline', type=str)
     parser.add_argument('--max_queries', type=int,
         help='仅统计前 max_queries 个模式，0 表示使用全部')
-    parser.add_argument('--chunksize', type=int,
-        help='多进程分块大小，越大越省调度开销')
     parser.add_argument('--progress_every', type=int,
         help='每处理多少个任务打印一次进度，0 表示关闭')
     parser.add_argument('--node_anchored', action="store_true")
@@ -63,7 +61,6 @@ def arg_parse():
                         count_method="bin",
                         baseline="none",
                         max_queries=0,
-                        chunksize=32,
                         progress_every=1000)
                         #node_anchored=True)
     return parser.parse_args()
@@ -398,7 +395,7 @@ def count_graphlets_helper(args):
 
 
 def count_graphlets(queries, targets, n_workers=1, method="bin",
-                    node_anchored=False, min_count=0, chunksize=32,
+                    node_anchored=False,
                     progress_every=1000, use_orbitsi=False):
     print(len(queries), len(targets))
 
@@ -479,8 +476,6 @@ def count_exact(queries, targets, args):
                                          n_workers=args.n_workers,
                                          method=args.count_method,
                                          node_anchored=args.node_anchored,
-                                         min_count=10000,
-                                         chunksize=args.chunksize,
                                          progress_every=args.progress_every,
                                          use_orbitsi=getattr(args, 'use_orbitsi', False))
     counts6 = []
@@ -578,7 +573,6 @@ if __name__ == "__main__":
                                     n_workers=args.n_workers,
                                     method=args.count_method,
                                     node_anchored=args.node_anchored,
-                                    chunksize=args.chunksize,
                                     progress_every=args.progress_every,
                                     use_orbitsi=getattr(args, 'use_orbitsi', False))
     elif args.baseline == "none":
@@ -586,7 +580,6 @@ if __name__ == "__main__":
                                     n_workers=args.n_workers,
                                     method=args.count_method,
                                     node_anchored=args.node_anchored,
-                                    chunksize=args.chunksize,
                                     progress_every=args.progress_every,
                                     use_orbitsi=getattr(args, 'use_orbitsi', False))
     else:
@@ -598,7 +591,6 @@ if __name__ == "__main__":
                                     n_workers=args.n_workers,
                                     method=args.count_method,
                                     node_anchored=args.node_anchored,
-                                    chunksize=args.chunksize,
                                     progress_every=args.progress_every,
                                     use_orbitsi=getattr(args, 'use_orbitsi', False))
 

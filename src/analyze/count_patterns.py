@@ -11,13 +11,11 @@ from torch_geometric.datasets import TUDataset
 from torch_geometric.datasets import PPI
 import torch_geometric.utils as pyg_utils
 
-from src.core import data
 from src.core import utils
 from src.subgraph_mining import decoder
 
 from multiprocessing import Pool
 import random
-from collections import defaultdict
 import networkx as nx
 import networkx.algorithms.isomorphism as iso
 import pickle
@@ -242,17 +240,6 @@ def gen_baseline_queries(queries, targets, method="mfinder", node_anchored=False
     return neighs
 
 
-def _compute_symmetries(query_info):
-    """惰性计算查询图的自同构数，会修改传入的 info 字典。"""
-    if query_info.get("_symmetry_computed"):
-        return
-    query = query_info["graph"]
-    ismags = nx.isomorphism.ISMAGS(query, query)
-    symmetries = list(ismags.isomorphisms_iter(symmetry=False))
-    query_info["n_symmetries"] = len(symmetries)
-    query_info["_symmetry_computed"] = True
-
-
 def preprocess_query(query, method, node_anchored):
     query = query.copy()
     query.remove_edges_from(nx.selfloop_edges(query))
@@ -264,8 +251,6 @@ def preprocess_query(query, method, node_anchored):
         "degree_seq": degree_seq,
         "anchor_count": sum(1 for _, data in query.nodes(data=True)
                             if data.get("anchor", 0) == 1) if node_anchored else 0,
-        "n_symmetries": None,          # 延迟计算
-        "_symmetry_computed": False
     }
     return info
 
@@ -347,30 +332,36 @@ def _count_one_pair(query_info, target_info, method, node_anchored, use_orbitsi)
     count = 0
     if method == "bin":
         if node_anchored:
-            # 原地修改目标图锚点属性
+            prev_anchor = None
             for anchor in target.nodes:
-                nx.set_node_attributes(target, 0, name="anchor")
+                if prev_anchor is not None:
+                    target.nodes[prev_anchor]["anchor"] = 0
                 target.nodes[anchor]["anchor"] = 1
+                prev_anchor = anchor
                 matcher = iso.GraphMatcher(target, query,
                                            node_match=iso.categorical_node_match(["anchor"], [0]))
                 if matcher.subgraph_is_isomorphic():
                     count += 1
-            # 清理锚点属性，避免副作用
-            nx.set_node_attributes(target, 0, name="anchor")
+            if prev_anchor is not None:
+                target.nodes[prev_anchor]["anchor"] = 0
         else:
             matcher = iso.GraphMatcher(target, query)
             count = int(matcher.subgraph_is_isomorphic())
     elif method == "freq":
         if node_anchored:
             seen = set()
+            prev_anchor = None
             for anchor in target.nodes:
-                nx.set_node_attributes(target, 0, name="anchor")
+                if prev_anchor is not None:
+                    target.nodes[prev_anchor]["anchor"] = 0
                 target.nodes[anchor]["anchor"] = 1
+                prev_anchor = anchor
                 matcher = iso.GraphMatcher(target, query,
                                            node_match=iso.categorical_node_match(["anchor"], [0]))
                 for match in matcher.subgraph_isomorphisms_iter():
                     seen.add(_make_target_key(match, query, node_anchored=True))
-            nx.set_node_attributes(target, 0, name="anchor")
+            if prev_anchor is not None:
+                target.nodes[prev_anchor]["anchor"] = 0
             count = len(seen)
         else:
             seen = set()
@@ -382,10 +373,28 @@ def _count_one_pair(query_info, target_info, method, node_anchored, use_orbitsi)
         raise ValueError(f"Unknown count method: {method}")
     return count
 
+# 多进程共享状态：通过 Pool(initializer=) 分发到各 Worker
+_worker_targets = None
+_worker_method = None
+_worker_node_anchored = None
+_worker_use_orbitsi = None
+
+
+def init_worker(targets, method, node_anchored, use_orbitsi):
+    global _worker_targets, _worker_method, _worker_node_anchored, _worker_use_orbitsi
+    _worker_targets = targets
+    _worker_method = method
+    _worker_node_anchored = node_anchored
+    _worker_use_orbitsi = use_orbitsi
+
+
 def count_graphlets_helper(args):
-    i, query_info, target_info, method, node_anchored, use_orbitsi = args
-    n = _count_one_pair(query_info, target_info, method, node_anchored, use_orbitsi)
-    return i, n
+    i, q_info = args
+    total = 0
+    for t_info in _worker_targets:
+        total += _count_one_pair(q_info, t_info, _worker_method,
+                                 _worker_node_anchored, _worker_use_orbitsi)
+    return i, total
 
 
 def count_graphlets(queries, targets, n_workers=1, method="bin",
@@ -404,26 +413,25 @@ def count_graphlets(queries, targets, n_workers=1, method="bin",
         if len(work_queries) != len(queries):
             print("freq query dedup:", len(queries), "->", len(work_queries))
 
-    # 构建任务生成器，避免一次装载全部参数
+    # 每个 Worker 持有全部 targets，任务只需传递 (i, q_info)
     def task_generator():
         for i, q_info in enumerate(work_queries):
-            for t_info in targets:
-                yield (i, q_info, t_info, method, node_anchored, use_orbitsi)
+            yield (i, q_info)
 
-    n_matches = defaultdict(float)
-    total = len(work_queries) * len(targets)
+    n_matches = [0] * len(work_queries)
+    total = len(work_queries)
     n_done = 0
-    if chunksize is None or chunksize < 1:
-        chunksize = 1
 
-    with Pool(processes=n_workers) as pool:
+    with Pool(processes=n_workers,
+              initializer=init_worker,
+              initargs=(targets, method, node_anchored, use_orbitsi)) as pool:
         for i, n in pool.imap_unordered(count_graphlets_helper, task_generator(),
-                                        chunksize=chunksize):
-            n_matches[i] += n
+                                        chunksize=1):
+            n_matches[i] = n
             n_done += 1
             if progress_every and progress_every > 0:
                 if n_done % progress_every == 0 or n_done == total:
-                    print(n_done, total, len(n_matches), i, n, "      ", end="\r")
+                    print(n_done, "/", total, "- query", i, "count", n, "      ", end="\r")
     print()
 
     unique_matches = [n_matches[i] for i in range(len(work_queries))]

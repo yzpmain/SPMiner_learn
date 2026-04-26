@@ -26,6 +26,7 @@ from src.core import models
 from src.core import utils
 from src.subgraph_matching.config import parse_encoder
 from src.subgraph_matching.test import validation
+from src.logger import RunLogger, info, section, progress
 
 def build_model(args):
     """根据命令行参数构建编码器模型，并在测试模式下加载权重。"""
@@ -174,10 +175,11 @@ def train_loop(args):
     if not os.path.exists("plots/"):
         os.makedirs("plots/")
 
-    print("Starting {} workers".format(args.n_workers))
+    info("Starting {} workers".format(args.n_workers))
     in_queue, out_queue = mp.Queue(), mp.Queue()
 
-    print("Using dataset {}".format(args.dataset))
+    section("数据加载")
+    info("Using dataset {}".format(args.dataset))
 
     record_keys = ["conv_type", "n_layers", "hidden_dim",
         "margin", "dataset", "max_graph_size", "skip"]
@@ -220,17 +222,18 @@ def train_loop(args):
         validation(args, model, test_pts, logger, 0, 0, verbose=True)
     else:
         batch_n = 0
+        section("训练")
         for epoch in range(args.n_batches // args.eval_interval):
             for i in range(args.eval_interval):
                 in_queue.put(("step", None))
             for i in range(args.eval_interval):
                 msg, params = out_queue.get()
                 train_loss, train_acc = params
-                print("Batch {}. Loss: {:.4f}. Training acc: {:.4f}".format(
-                    batch_n, train_loss, train_acc), end="               \r")
+                progress(batch_n, args.n_batches, Loss=train_loss, Acc=train_acc)
                 logger.add_scalar("Loss/train", train_loss, batch_n)
                 logger.add_scalar("Accuracy/train", train_acc, batch_n)
                 batch_n += 1
+            section("验证")
             validation(args, model, test_pts, logger, batch_n, epoch)
 
     for i in range(args.n_workers):
@@ -255,7 +258,8 @@ def main(force_test=False):
     if force_test:
         args.test = True
 
-    train_loop(args)
+    with RunLogger(args):
+        train_loop(args)
 
 if __name__ == '__main__':
     main()

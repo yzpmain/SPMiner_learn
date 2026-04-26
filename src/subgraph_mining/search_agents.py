@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from src.core import utils
+from src.logger import info, warning, progress
 
 import matplotlib.pyplot as plt
 
@@ -140,8 +141,8 @@ class MCTSSearchAgent(SearchAgent):
         ps /= np.sum(ps)
         graph_dist = stats.rv_discrete(values=(np.arange(len(self.dataset)), ps))
 
-        print("Size", self.max_size)
-        print(len(self.visited_seed_nodes), "distinct seeds")
+        info("MCTS exploring size {} ({} distinct seeds)".format(
+            self.max_size, len(self.visited_seed_nodes)))
         for simulation_n in tqdm(range(self.n_trials //
             (self.max_pattern_size+1-self.min_pattern_size))):
             # 选择种子节点
@@ -248,7 +249,7 @@ class MCTSSearchAgent(SearchAgent):
                 x: x[1], reverse=True)[:self.out_batch_size]:
                 cand_patterns_uniq.append(random.choice(
                     self.wl_hash_to_graphs[wl_hash]))
-                print("- outputting", count, "motifs of size", pattern_size)
+                info("Outputting {} motifs of size {}".format(count, pattern_size))
         return cand_patterns_uniq
 
 class GreedySearchAgent(SearchAgent):
@@ -275,8 +276,8 @@ class GreedySearchAgent(SearchAgent):
         self.n_beams = n_beams
         self.max_steps = max_steps
         self.step_count = 0
-        print("Rank Method:", rank_method)
-        print("Max Steps:", max_steps)
+        info("Rank Method: {}".format(rank_method))
+        info("Max Steps: {}".format(max_steps))
 
     def init_search(self):
         """初始化贪心搜索 beam。"""
@@ -307,11 +308,12 @@ class GreedySearchAgent(SearchAgent):
         基于匹配模型分数选择最优扩展。
         """
         self.step_count += 1
-        print(f"Step {self.step_count}/{self.max_steps}, Active beams: {len(self.beam_sets)}")
+        progress(self.step_count, self.max_steps,
+                 Active_beams=len(self.beam_sets))
 
         new_beam_sets = []
-        print("seeds come from", len(set(b[0][-1] for b in self.beam_sets)),
-            "distinct graphs")
+        info("Seeds from {} distinct graphs".format(
+            len(set(b[0][-1] for b in self.beam_sets))))
         analyze_embs_cur = []
         for beam_set in tqdm(self.beam_sets):
             new_beams = []
@@ -337,7 +339,8 @@ class GreedySearchAgent(SearchAgent):
                                 cand_emb.unsqueeze(0).expand(len(emb_batch), -1)
                                 )[:,0]).item()
                         else:
-                            print("未识别的模型类型")
+                            warning("Unrecognized model type: {}".format(
+                                self.model_type))
                     if score < best_score:
                         best_score = score
                         best_node = cand_node
@@ -373,7 +376,7 @@ class GreedySearchAgent(SearchAgent):
     def finish_search(self):
         """根据 rank_method 汇总并去重输出模式。"""
         if self.analyze:
-            print("Saving analysis info in results/analyze.p")
+            info("Analysis info saved → results/analyze.p")
             with open("results/analyze.p", "wb") as f:
                 pickle.dump((self.cand_patterns, self.analyze_embs), f)
             xs, ys = [], []
@@ -381,7 +384,7 @@ class GreedySearchAgent(SearchAgent):
                 for emb in embs_ls:
                     xs.append(emb[0])
                     ys.append(emb[1])
-            print("Saving analysis plot in results/analyze.png")
+            info("Analysis plot saved → results/analyze.png")
             plt.scatter(xs, ys, color="red", label="motif")
             plt.legend()
             plt.savefig("plots/analyze.png")
@@ -413,5 +416,6 @@ class GreedySearchAgent(SearchAgent):
                     key=lambda x: len(x[1]), reverse=True))[:self.out_batch_size]:
                     cand_patterns_uniq.append(random.choice(neighs))
             else:
-                print("未识别的排名方法")
+                warning("Unrecognized rank method: {}".format(
+                    cur_rank_method))
         return cand_patterns_uniq

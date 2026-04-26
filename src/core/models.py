@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as pyg_nn
 import torch_geometric.utils as pyg_utils
+from src.logger import warning
 
 from src.core import utils
 from src.core import feature_preprocess
@@ -169,7 +170,7 @@ class SkipLastGNN(nn.Module):
         elif model_type == "PNA":
             return SAGEConv
         else:
-            print("未识别的模型类型")
+            warning("Unrecognized model type")
 
     def forward(self, data):
         # 如果启用了特征增强，会先对图节点特征做预处理。

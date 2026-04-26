@@ -1,4 +1,5 @@
 from src.core import utils
+from src.logger import info, warning
 from collections import defaultdict
 from datetime import datetime
 from sklearn.metrics import roc_auc_score, confusion_matrix
@@ -63,7 +64,7 @@ def validation(args, model, test_pts, logger, batch_n, epoch, verbose=False):
                 pred = torch.stack([m.clf_model(
                     raw_pred.unsqueeze(1)).argmax(dim=-1) for m in model.models])
                 for i in range(pred.shape[1]):
-                    print(pred[:,i])
+                    pass  # ensemble debug: print(pred[:,i])
                 pred = torch.min(pred, dim=0)[0]
                 raw_pred *= -1
             elif args.method_type == "mlp":
@@ -94,13 +95,11 @@ def validation(args, model, test_pts, logger, batch_n, epoch, verbose=False):
         plt.xlabel("Recall")
         plt.ylabel("Precision")
         plt.savefig("plots/precision-recall-curve.png")
-        print("Saved PR curve plot in plots/precision-recall-curve.png")
+        info("PR curve saved → plots/precision-recall-curve.png")
 
-    print("\n{}".format(str(datetime.now())))
-    print("Validation. Epoch {}. Acc: {:.4f}. "
-        "P: {:.4f}. R: {:.4f}. AUROC: {:.4f}. AP: {:.4f}.\n     "
-        "TN: {}. FP: {}. FN: {}. TP: {}".format(epoch,
-            acc, prec, recall, auroc, avg_prec,
+    info("Epoch {} | Acc: {:.4f} | P: {:.4f} | R: {:.4f} | AUROC: {:.4f} | "
+        "AP: {:.4f} | TN: {} | FP: {} | FN: {} | TP: {}".format(
+            epoch, acc, prec, recall, auroc, avg_prec,
             tn, fp, fn, tp))
 
     # 非测试模式下，把验证结果记入 TensorBoard，并保存模型。
@@ -114,7 +113,7 @@ def validation(args, model, test_pts, logger, batch_n, epoch, verbose=False):
         logger.add_scalar("TN/test", tn, batch_n)
         logger.add_scalar("FP/test", fp, batch_n)
         logger.add_scalar("FN/test", fn, batch_n)
-        print("Saving {}".format(args.model_path))
+        info("Checkpoint saved → {}".format(args.model_path))
         torch.save(model.state_dict(), args.model_path)
 
     if verbose:

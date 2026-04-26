@@ -15,6 +15,7 @@ import scipy.stats as stats
 from tqdm import tqdm
 
 from src.core import feature_preprocess
+from src.logger import info, warning
 
 def sample_neigh(graphs, size, max_attempts=100):
     """在图集合中按图大小加权采样一个连通邻域。
@@ -55,7 +56,8 @@ def sample_neigh(graphs, size, max_attempts=100):
             return graph, neigh
 
     # 如果尝试多次都失败，返回最大的可连通子图
-    print(f"Warning: Could not sample neighborhood of size {size} after {max_attempts} attempts")
+    warning("Could not sample neighborhood of size {} after {} attempts".format(
+        size, max_attempts))
     return graph, neigh
 
 cached_masks = None
@@ -114,14 +116,13 @@ def gen_baseline_queries_rand_esu(queries, targets, node_anchored=False):
             all_subgraphs[size][k] += v
             if size == max_size: total_n_max_subgraphs += len(v)
             total_n_subgraphs += len(v)
-    print(total_n_subgraphs, "subgraphs explored")
-    print(total_n_max_subgraphs, "max-size subgraphs explored")
+    info("Subgraphs explored: {} (max-size: {})".format(
+        total_n_subgraphs, total_n_max_subgraphs))
     out = []
     for size, count in sizes.items():
         counts = all_subgraphs[size]
         for _, neighs in list(sorted(counts.items(), key=lambda x: len(x[1]),
             reverse=True))[:count]:
-            print(len(neighs))
             out.append(random.choice(neighs))
     return out
 

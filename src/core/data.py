@@ -17,6 +17,7 @@ import scipy.stats as stats
 from src.core import combined_syn
 from src.core import feature_preprocess
 from src.core import utils
+from src.logger import info
 
 
 def _imbalanced_add_anchor(g, node_anchored):
@@ -50,12 +51,11 @@ def _imbalanced_gen_batch_impl(self, graphs_a, graphs_b, _, train, cache_fn):
             os.makedirs("data/cache")
         with open(cache_fn, "wb") as f:
             pickle.dump((pos_a, pos_b, neg_a, neg_b), f)
-        print("saved", cache_fn)
+        info("Cache saved → {}".format(cache_fn))
     else:
         with open(cache_fn, "rb") as f:
-            print("loaded", cache_fn)
+            info("Cache loaded ← {}".format(cache_fn))
             pos_a, pos_b, neg_a, neg_b = pickle.load(f)
-    print(len(pos_a), len(neg_a))
     if pos_a:
         pos_a = utils.batch_nx_graphs(pos_a)
         pos_b = utils.batch_nx_graphs(pos_b)

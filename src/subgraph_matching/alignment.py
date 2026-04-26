@@ -17,6 +17,7 @@ from src.core import utils
 from src.subgraph_matching.config import parse_encoder
 from src.subgraph_matching.test import validation
 from src.subgraph_matching.train import build_model
+from src.logger import RunLogger, info
 
 def gen_alignment_matrix(model, query, target, method_type="order"):
     """为给定的查询图和目标图生成子图匹配对齐矩阵。
@@ -46,11 +47,6 @@ def gen_alignment_matrix(model, query, target, method_type="order"):
     return mat
 
 def main():
-    if not os.path.exists("plots/"):
-        os.makedirs("plots/")
-    if not os.path.exists("results/"):
-        os.makedirs("results/")
-
     parser = argparse.ArgumentParser(description='对齐矩阵参数')
     utils.parse_optimizer(parser)
     parse_encoder(parser)
@@ -60,27 +56,34 @@ def main():
         default="")
     args = parser.parse_args()
     args.test = True
-    if args.query_path:
-        with open(args.query_path, "rb") as f:
-            query = pickle.load(f)
-    else:
-        query = nx.gnp_random_graph(8, 0.25)
-    if args.target_path:
-        with open(args.target_path, "rb") as f:
-            target = pickle.load(f)
-    else:
-        target = nx.gnp_random_graph(16, 0.25)
 
-    model = build_model(args)
-    mat = gen_alignment_matrix(model, query, target,
-        method_type=args.method_type)
+    if not os.path.exists("plots/"):
+        os.makedirs("plots/")
+    if not os.path.exists("results/"):
+        os.makedirs("results/")
 
-    np.save("results/alignment.npy", mat)
-    print("Saved alignment matrix in results/alignment.npy")
+    with RunLogger(args):
+        if args.query_path:
+            with open(args.query_path, "rb") as f:
+                query = pickle.load(f)
+        else:
+            query = nx.gnp_random_graph(8, 0.25)
+        if args.target_path:
+            with open(args.target_path, "rb") as f:
+                target = pickle.load(f)
+        else:
+            target = nx.gnp_random_graph(16, 0.25)
 
-    plt.imshow(mat, interpolation="nearest")
-    plt.savefig("plots/alignment.png")
-    print("Saved alignment matrix plot in plots/alignment.png")
+        model = build_model(args)
+        mat = gen_alignment_matrix(model, query, target,
+            method_type=args.method_type)
+
+        np.save("results/alignment.npy", mat)
+        info("Alignment matrix saved → results/alignment.npy")
+
+        plt.imshow(mat, interpolation="nearest")
+        plt.savefig("plots/alignment.png")
+        info("Alignment matrix plot saved → plots/alignment.png")
 
 if __name__ == '__main__':
     main()

@@ -15,6 +15,7 @@ from src.core import combined_syn
 from src.subgraph_mining.config import parse_decoder
 from src.subgraph_matching.config import parse_encoder
 from src.subgraph_mining.search_agents import GreedySearchAgent, MCTSSearchAgent
+from src.logger import RunLogger, info, section
 
 import matplotlib.pyplot as plt
 
@@ -77,9 +78,10 @@ def pattern_growth(dataset, task, args):
     # 将不同来源数据统一为 networkx.Graph 列表，
     # 便于后续采样和搜索器逻辑复用。
     neighs = []
-    print(len(dataset), "graphs")
-    print("search strategy:", args.search_strategy)
-    if task == "graph-labeled": print("using label 0")
+    info("Dataset: {} graphs".format(len(dataset)))
+    info("Search strategy: {}".format(args.search_strategy))
+    if task == "graph-labeled":
+        info("Using label 0")
     graphs = []
     for i, graph in enumerate(dataset):
         if task == "graph-labeled" and labels[i] != 0: continue
@@ -90,12 +92,14 @@ def pattern_growth(dataset, task, args):
     if args.use_whole_graphs:
         neighs = graphs
     else:
+        section("邻域采样")
         anchors = []
         if args.sample_method == "radial":
             for i, graph in enumerate(graphs):
-                print(i)
+                if len(dataset) > 100 or i % 10 == 0:
+                    info("Radial sampling: graph {}/{} ({} nodes)".format(
+                        i, len(graphs), len(graph)))
                 for j, node in enumerate(graph.nodes):
-                    if len(dataset) <= 10 and j % 100 == 0: print(i, j)
                     if args.use_whole_graphs:
                         neigh = graph.nodes
                     else:
@@ -125,6 +129,7 @@ def pattern_growth(dataset, task, args):
                 if args.node_anchored:
                     anchors.append(0)   # after converting labels, 0 will be anchor
 
+    section("嵌入编码")
     embs = []
     for i in range(0, len(neighs), args.batch_size):
         batch_neighs = neighs[i:i+args.batch_size]
@@ -139,6 +144,7 @@ def pattern_growth(dataset, task, args):
         plt.scatter(embs_np[:,0], embs_np[:,1], label="node neighborhood")
 
     # 搜索阶段：把候选邻域嵌入交给策略代理，输出频繁模式。
+    section("模式搜索")
     if args.search_strategy == "mcts":
         assert args.method_type == "order"
         agent = MCTSSearchAgent(args.min_pattern_size, args.max_pattern_size,
@@ -152,9 +158,8 @@ def pattern_growth(dataset, task, args):
             out_batch_size=args.out_batch_size,
             frontier_top_k=args.frontier_top_k, max_steps=args.n_trials)
     out_graphs = agent.run_search(args.n_trials)
-    print(time.time() - start_time, "TOTAL TIME")
-    x = int(time.time() - start_time)
-    print(x // 60, "mins", x % 60, "secs")
+    elapsed = time.time() - start_time
+    info("Total time: {:.1f}s ({:.1f}min)".format(elapsed, elapsed / 60))
 
     # 可视化输出模式：每种大小按出现顺序保存图像。
     count_by_size = defaultdict(int)
@@ -164,8 +169,8 @@ def pattern_growth(dataset, task, args):
             nx.draw(pattern, node_color=colors, with_labels=True)
         else:
             nx.draw(pattern)
-        print("Saving plots/cluster/{}-{}.png".format(len(pattern),
-            count_by_size[len(pattern)]))
+        info("Pattern saved → plots/cluster/{}-{}.png".format(
+            len(pattern), count_by_size[len(pattern)]))
         plt.savefig("plots/cluster/{}-{}.png".format(len(pattern),
             count_by_size[len(pattern)]))
         plt.savefig("plots/cluster/{}-{}.pdf".format(len(pattern),
@@ -186,83 +191,79 @@ def main():
     - 读取数据集；
     - 调用 pattern_growth 执行完整挖掘。
     """
-    if not os.path.exists("plots/cluster"):
-        os.makedirs("plots/cluster")
-
     parser = argparse.ArgumentParser(description='解码器参数')
     parse_encoder(parser)
     parse_decoder(parser)
     args = parser.parse_args()
 
-    print("Using dataset {}".format(args.dataset))
-    if args.dataset.startswith('syn'):
-        # 使用合成数据集进行挖掘
-        generator = combined_syn.get_generator([10])
-        dataset = [generator.generate(size=10) for _ in range(10)]
-        task = 'graph'
-    elif args.dataset == 'enzymes':
-        dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-        task = 'graph'
-    elif args.dataset == 'cox2':
-        dataset = TUDataset(root='/tmp/cox2', name='COX2')
-        task = 'graph'
-    elif args.dataset == 'reddit-binary':
-        dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
-        task = 'graph'
-    elif args.dataset == 'dblp':
-        dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
-        task = 'graph-truncate'
-    elif args.dataset == 'coil':
-        dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
-        task = 'graph'
-    elif args.dataset.startswith('roadnet-'):
-        graph = nx.Graph()
-        with open("data/{}.txt".format(args.dataset), "r") as f:
-            for row in f:
-                if not row.startswith("#"):
-                    a, b = row.split("\t")
-                    graph.add_edge(int(a), int(b))
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset == "ppi":
-        dataset = PPI(root="/tmp/PPI")
-        task = 'graph'
-    elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-        fn = {"diseasome": "bio-diseasome.mtx",
-            "usroads": "road-usroads.mtx",
-            "mn-roads": "mn-roads.mtx",
-            "infect": "infect-dublin.edges"}
-        graph = nx.Graph()
-        with open("data/{}".format(fn[args.dataset]), "r") as f:
-            for line in f:
-                if not line.strip(): continue
-                a, b = line.strip().split(" ")
-                graph.add_edge(int(a), int(b))
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset.startswith('plant-'):
-        size = int(args.dataset.split("-")[-1])
-        dataset = make_plant_dataset(size)
-        task = 'graph'
-    elif args.dataset.startswith("facebook_combined"):
-        # 支持 facebook_combined_200 等新 SNAP 边列表数据集
-        graph = utils.load_snap_edgelist(f"data/{args.dataset}.txt")
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset == 'facebook':
-        # 斯坦福 SNAP ego-Facebook 数据集
-        # 请将 facebook_combined.txt 放置在 data/ 目录下
-        graph = utils.load_snap_edgelist("data/facebook_combined.txt")
-        dataset = [graph]
-        task = 'graph'
-    elif args.dataset in ['as-733', 'as20000102']:
-        # 斯坦福 SNAP Autonomous Systems 数据集
-        # 默认使用 2000-01-02 的最大快照，请将 as20000102.txt 放置在 data/ 目录下。
-        graph = utils.load_snap_edgelist("data/as20000102.txt")
-        dataset = [graph]
-        task = 'graph'
+    with RunLogger(args):
+        if not os.path.exists("plots/cluster"):
+            os.makedirs("plots/cluster")
 
-    pattern_growth(dataset, task, args) 
+        section("数据加载")
+        info("Using dataset {}".format(args.dataset))
+        if args.dataset.startswith('syn'):
+            generator = combined_syn.get_generator([10])
+            dataset = [generator.generate(size=10) for _ in range(10)]
+            task = 'graph'
+        elif args.dataset == 'enzymes':
+            dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+            task = 'graph'
+        elif args.dataset == 'cox2':
+            dataset = TUDataset(root='/tmp/cox2', name='COX2')
+            task = 'graph'
+        elif args.dataset == 'reddit-binary':
+            dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
+            task = 'graph'
+        elif args.dataset == 'dblp':
+            dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
+            task = 'graph-truncate'
+        elif args.dataset == 'coil':
+            dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
+            task = 'graph'
+        elif args.dataset.startswith('roadnet-'):
+            graph = nx.Graph()
+            with open("data/{}.txt".format(args.dataset), "r") as f:
+                for row in f:
+                    if not row.startswith("#"):
+                        a, b = row.split("\t")
+                        graph.add_edge(int(a), int(b))
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset == "ppi":
+            dataset = PPI(root="/tmp/PPI")
+            task = 'graph'
+        elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
+            fn = {"diseasome": "bio-diseasome.mtx",
+                "usroads": "road-usroads.mtx",
+                "mn-roads": "mn-roads.mtx",
+                "infect": "infect-dublin.edges"}
+            graph = nx.Graph()
+            with open("data/{}".format(fn[args.dataset]), "r") as f:
+                for line in f:
+                    if not line.strip(): continue
+                    a, b = line.strip().split(" ")
+                    graph.add_edge(int(a), int(b))
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset.startswith('plant-'):
+            size = int(args.dataset.split("-")[-1])
+            dataset = make_plant_dataset(size)
+            task = 'graph'
+        elif args.dataset.startswith("facebook_combined"):
+            graph = utils.load_snap_edgelist(f"data/{args.dataset}.txt")
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset == 'facebook':
+            graph = utils.load_snap_edgelist("data/facebook_combined.txt")
+            dataset = [graph]
+            task = 'graph'
+        elif args.dataset in ['as-733', 'as20000102']:
+            graph = utils.load_snap_edgelist("data/as20000102.txt")
+            dataset = [graph]
+            task = 'graph'
+
+        pattern_growth(dataset, task, args)
 
 if __name__ == '__main__':
     main()

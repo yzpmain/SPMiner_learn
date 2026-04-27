@@ -9,12 +9,12 @@ import networkx as nx
 import numpy as np
 import torch
 from torch.utils.data import DataLoader as TorchDataLoader
-from torch_geometric.datasets import TUDataset, PPI, QM9
 import torch_geometric.utils as pyg_utils
 from tqdm import tqdm
 import scipy.stats as stats
 
 from src.core import combined_syn
+from src.core import dataset_registry
 from src.core import feature_preprocess
 from src.core import utils
 from src.logger import info
@@ -70,45 +70,13 @@ def load_dataset(name):
 
     用作 DiskDataSource 的辅助函数。
     """
-    task = "graph"
-    if name == "enzymes":
-        dataset = TUDataset(root="/tmp/ENZYMES", name="ENZYMES")
-    elif name == "proteins":
-        dataset = TUDataset(root="/tmp/PROTEINS", name="PROTEINS")
-    elif name == "cox2":
-        dataset = TUDataset(root="/tmp/cox2", name="COX2")
-    elif name == "aids":
-        dataset = TUDataset(root="/tmp/AIDS", name="AIDS")
-    elif name == "reddit-binary":
-        dataset = TUDataset(root="/tmp/REDDIT-BINARY", name="REDDIT-BINARY")
-    elif name == "imdb-binary":
-        dataset = TUDataset(root="/tmp/IMDB-BINARY", name="IMDB-BINARY")
-    elif name == "firstmm_db":
-        dataset = TUDataset(root="/tmp/FIRSTMM_DB", name="FIRSTMM_DB")
-    elif name == "dblp":
-        dataset = TUDataset(root="/tmp/DBLP_v1", name="DBLP_v1")
-    elif name == "ppi":
-        dataset = PPI(root="/tmp/PPI")
-    elif name == "qm9":
-        dataset = QM9(root="/tmp/QM9")
-    elif name == "atlas":
-        dataset = [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)]
-    elif name == "facebook":
-        # 斯坦福 SNAP ego-Facebook 数据集（单个大图）
-        # 文件来源：https://snap.stanford.edu/data/ego-Facebook.html
-        # 请将 facebook_combined.txt 放置在 data/ 目录下
-        graph = utils.load_snap_edgelist("data/facebook_combined.txt")
-        return [graph], [graph], "graph"
-    elif name.startswith("facebook_combined"):
-        # 支持 facebook_combined_200 等新 SNAP 边列表数据集
-        graph = utils.load_snap_edgelist(f"data/{name}.txt")
-        return [graph], [graph], "graph"
-    elif name in ("as-733", "as20000102"):
-        # 斯坦福 SNAP Autonomous Systems AS-733 数据集。
-        # 这里默认使用数据集里节点和边都最多的一天快照（2000-01-02）。
-        # 请将 as20000102.txt 放置在 data/ 目录下。
-        graph = utils.load_snap_edgelist("data/as20000102.txt")
-        return [graph], [graph], "graph"
+    # 统一通过注册中心做命名归一化与合法性校验，避免多处 if-elif 漂移。
+    dataset, task = dataset_registry.load_dataset_for_stage(name, "train-disk")
+
+    # 单图数据集（如 facebook/as20000102）在训练场景中不做随机切分。
+    if isinstance(dataset, list) and len(dataset) == 1 and isinstance(dataset[0], nx.Graph):
+        return [dataset[0]], [dataset[0]], task
+
     if task == "graph":
         train_len = int(0.8 * len(dataset))
         train, test = [], []

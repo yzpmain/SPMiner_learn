@@ -8,12 +8,11 @@ import traceback
 import numpy as np
 
 from torch_geometric.datasets import TUDataset
-from torch_geometric.datasets import PPI
 import torch_geometric.utils as pyg_utils
 
+from src.core import dataset_registry
 from src.core import utils
 from src.logger import RunLogger, info, warning, section, progress
-from src.subgraph_mining import decoder
 
 from multiprocessing import Pool
 import random
@@ -348,56 +347,16 @@ if __name__ == "__main__":
         if args.dataset != "analyze" and not os.path.exists(args.queries_path):
             raise FileNotFoundError(f"Queries file not found: {args.queries_path}")
 
-        if args.dataset == 'syn':
-            from src.core import combined_syn
-            generator = combined_syn.get_generator([10])
-            dataset = [generator.generate(size=10) for _ in range(10)]
-        elif args.dataset == 'enzymes':
-            dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-        elif args.dataset == 'cox2':
-            dataset = TUDataset(root='/tmp/cox2', name='COX2')
-        elif args.dataset == 'reddit-binary':
-            dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
-        elif args.dataset == 'coil':
-            dataset = TUDataset(root='/tmp/COIL-DEL', name='COIL-DEL')
-        elif args.dataset == 'ppi-pathways':
-            graph = nx.Graph()
-            with open("data/ppi-pathways.csv", "r") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    graph.add_edge(int(row[0]), int(row[1]))
-            dataset = [graph]
-        elif args.dataset == 'ppi':
-            dataset = PPI(root='/tmp/PPI')
-        elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-            fn = {"diseasome": "bio-diseasome.mtx",
-                  "usroads": "road-usroads.mtx",
-                  "mn-roads": "mn-roads.mtx",
-                  "infect": "infect-dublin.edges"}
-            graph = nx.Graph()
-            with open("data/{}".format(fn[args.dataset]), "r") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    a, b = line.strip().split(" ")
-                    graph.add_edge(int(a), int(b))
-            dataset = [graph]
-        elif args.dataset.startswith('plant-'):
-            size = int(args.dataset.split("-")[-1])
-            dataset = decoder.make_plant_dataset(size)
-        elif args.dataset == 'facebook':
-            dataset = [utils.load_snap_edgelist("data/facebook_combined.txt")]
-        elif args.dataset in ["as-733", "as20000102"]:
-            dataset = [utils.load_snap_edgelist("data/as20000102.txt")]
-        elif args.dataset.startswith('facebook_combined'):
-            dataset = [utils.load_snap_edgelist("data/{}.txt".format(args.dataset))]
-        elif args.dataset.startswith('roadnet-'):
-            dataset = [utils.load_snap_edgelist("data/{}.txt".format(args.dataset))]
-        elif args.dataset == "analyze":
+        if args.dataset == "analyze":
             with open("results/analyze.p", "rb") as f:
                 cand_patterns, _ = pickle.load(f)
                 queries = [q for score, q in cand_patterns[10]][:200]
             dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+        else:
+            # 统一命名与入口校验：复用注册中心与挖掘/训练保持一致。
+            normalized_dataset = dataset_registry.validate_dataset_name(args.dataset, "count")
+            args.dataset = normalized_dataset
+            dataset, _ = dataset_registry.load_dataset_for_stage(args.dataset, "count")
 
         targets = []
         for i in range(len(dataset)):

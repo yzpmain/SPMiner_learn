@@ -22,6 +22,7 @@ from deepsnap.batch import Batch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.core import data
+from src.core import dataset_registry
 from src.core import models
 from src.core import utils
 from src.subgraph_matching.config import parse_encoder
@@ -49,25 +50,31 @@ def make_data_source(args):
 
     另外支持 balanced / imbalanced 两种采样方式。
     """
-    toks = args.dataset.split("-")
-    if toks[0] == "syn":
-        if len(toks) == 1 or toks[1] == "balanced":
-            data_source = data.OTFSynDataSource(
-                node_anchored=args.node_anchored)
-        elif toks[1] == "imbalanced":
-            data_source = data.OTFSynImbalancedDataSource(
-                node_anchored=args.node_anchored)
+    raw_dataset = args.dataset.strip().lower()
+
+    # 仅识别尾缀采样模式，避免 reddit-binary / as-733 这类合法名称被误拆分。
+    mode = "balanced"
+    base_dataset = raw_dataset
+    if raw_dataset.endswith("-balanced"):
+        base_dataset = raw_dataset[: -len("-balanced")]
+        mode = "balanced"
+    elif raw_dataset.endswith("-imbalanced"):
+        base_dataset = raw_dataset[: -len("-imbalanced")]
+        mode = "imbalanced"
+
+    if base_dataset.startswith("syn"):
+        if mode == "balanced":
+            data_source = data.OTFSynDataSource(node_anchored=args.node_anchored)
         else:
-            raise Exception("Error: unrecognized dataset")
+            data_source = data.OTFSynImbalancedDataSource(node_anchored=args.node_anchored)
     else:
-        if len(toks) == 1 or toks[1] == "balanced":
-            data_source = data.DiskDataSource(toks[0],
-                node_anchored=args.node_anchored)
-        elif toks[1] == "imbalanced":
-            data_source = data.DiskImbalancedDataSource(toks[0],
+        normalized_dataset = dataset_registry.validate_dataset_name(base_dataset, "train-disk")
+        if mode == "balanced":
+            data_source = data.DiskDataSource(normalized_dataset,
                 node_anchored=args.node_anchored)
         else:
-            raise Exception("Error: unrecognized dataset")
+            data_source = data.DiskImbalancedDataSource(normalized_dataset,
+                node_anchored=args.node_anchored)
     return data_source
 
 def _prefetch_worker(data_source, loader_iter, prefetch_queue, cancel_event, max_batches):

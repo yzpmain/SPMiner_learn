@@ -6,9 +6,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from torch_geometric.datasets import TUDataset, PPI
 import torch_geometric.utils as pyg_utils
 
+from src.core import dataset_registry
 from src.core import models
 from src.core import utils
 from src.core import combined_syn
@@ -201,67 +201,11 @@ def main():
             os.makedirs("plots/cluster")
 
         section("数据加载")
+        # 统一命名与入口校验：所有挖掘数据集都从注册中心加载。
+        normalized_dataset = dataset_registry.validate_dataset_name(args.dataset, "mining")
+        args.dataset = normalized_dataset
         info("Using dataset {}".format(args.dataset))
-        if args.dataset.startswith('syn'):
-            generator = combined_syn.get_generator([10])
-            dataset = [generator.generate(size=10) for _ in range(10)]
-            task = 'graph'
-        elif args.dataset == 'enzymes':
-            dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-            task = 'graph'
-        elif args.dataset == 'cox2':
-            dataset = TUDataset(root='/tmp/cox2', name='COX2')
-            task = 'graph'
-        elif args.dataset == 'reddit-binary':
-            dataset = TUDataset(root='/tmp/REDDIT-BINARY', name='REDDIT-BINARY')
-            task = 'graph'
-        elif args.dataset == 'dblp':
-            dataset = TUDataset(root='/tmp/dblp', name='DBLP_v1')
-            task = 'graph-truncate'
-        elif args.dataset == 'coil':
-            dataset = TUDataset(root='/tmp/coil', name='COIL-DEL')
-            task = 'graph'
-        elif args.dataset.startswith('roadnet-'):
-            graph = nx.Graph()
-            with open("data/{}.txt".format(args.dataset), "r") as f:
-                for row in f:
-                    if not row.startswith("#"):
-                        a, b = row.split("\t")
-                        graph.add_edge(int(a), int(b))
-            dataset = [graph]
-            task = 'graph'
-        elif args.dataset == "ppi":
-            dataset = PPI(root="/tmp/PPI")
-            task = 'graph'
-        elif args.dataset in ['diseasome', 'usroads', 'mn-roads', 'infect']:
-            fn = {"diseasome": "bio-diseasome.mtx",
-                "usroads": "road-usroads.mtx",
-                "mn-roads": "mn-roads.mtx",
-                "infect": "infect-dublin.edges"}
-            graph = nx.Graph()
-            with open("data/{}".format(fn[args.dataset]), "r") as f:
-                for line in f:
-                    if not line.strip(): continue
-                    a, b = line.strip().split(" ")
-                    graph.add_edge(int(a), int(b))
-            dataset = [graph]
-            task = 'graph'
-        elif args.dataset.startswith('plant-'):
-            size = int(args.dataset.split("-")[-1])
-            dataset = make_plant_dataset(size)
-            task = 'graph'
-        elif args.dataset.startswith("facebook_combined"):
-            graph = utils.load_snap_edgelist(f"data/{args.dataset}.txt")
-            dataset = [graph]
-            task = 'graph'
-        elif args.dataset == 'facebook':
-            graph = utils.load_snap_edgelist("data/facebook_combined.txt")
-            dataset = [graph]
-            task = 'graph'
-        elif args.dataset in ['as-733', 'as20000102']:
-            graph = utils.load_snap_edgelist("data/as20000102.txt")
-            dataset = [graph]
-            task = 'graph'
+        dataset, task = dataset_registry.load_dataset_for_stage(args.dataset, "mining")
 
         pattern_growth(dataset, task, args)
 

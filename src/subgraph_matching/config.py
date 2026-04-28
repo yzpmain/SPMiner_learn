@@ -1,5 +1,7 @@
 import argparse
 
+from src.core.cli import add_runtime_args
+
 def parse_encoder(parser, arg_str=None):
     """注册子图匹配（编码器）阶段参数。
 
@@ -47,9 +49,9 @@ def parse_encoder(parser, arg_str=None):
     enc_parser.add_argument('--node_anchored', action="store_true",
                         help='训练时是否使用节点锚定')
     enc_parser.add_argument('--test', action="store_true")
-    enc_parser.add_argument('--n_workers', type=int)
-    enc_parser.add_argument('--tag', type=str,
-        help='用于标识本次运行的标签')
+    add_runtime_args(enc_parser, include_gpu=True, include_seed=True,
+        include_tag=True, include_n_workers=True,
+        include_progress_write_interval=True)
 
     # 默认配置偏向稳定训练：SAGE 卷积 + order embedding。
     enc_parser.set_defaults(conv_type='SAGE',
@@ -69,9 +71,7 @@ def parse_encoder(parser, arg_str=None):
                         margin=0.1,
                         test_set='',
                         eval_interval=1000,
-                        n_workers=4,
                         model_path="ckpt/model.pt",
-                        tag='',
                         val_size=4096,
                         node_anchored=True)
 

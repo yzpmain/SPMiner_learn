@@ -126,6 +126,9 @@ class RunLogger:
     """
 
     def __init__(self, args, log_dir: str = "runlogs"):
+        # progress_write_interval: 控制写入 run.log 的最小间隔（秒），避免每次 progress 调用都写文件造成 IO 开销
+        # 默认 1.0s
+        self._progress_write_interval = getattr(args, 'progress_write_interval', 1.0)
         self._start_time = time.time()
         self._args = args
         self._log_dir = log_dir
@@ -154,6 +157,9 @@ class RunLogger:
         # 注册为活跃 logger
         global _active_logger
         _active_logger = self
+
+        # 记录上次 progress 写入的时间，用于节流
+        self._last_progress_write_time = 0.0
 
         # 写头部信息
         self._write_header()
@@ -267,10 +273,27 @@ class RunLogger:
         padding = " " * max(0, 80 - len(line))
 
         ts = _timestamp()
-        self._log_file.write(f"[{ts}] [进度] {line}\n")
-        self._log_file.flush()
-        self._orig_stdout.write(f"\r{line}{padding}")
-        self._orig_stdout.flush()
+        # 写入文件采用节流，减少磁盘 IO：仅在距离上次写入超过阈值时才写入 run.log
+        try:
+            now = time.time()
+            if now - getattr(self, '_last_progress_write_time', 0.0) >= self._progress_write_interval:
+                self._log_file.write(f"[{ts}] [进度] {line}\n")
+                self._log_file.flush()
+                self._last_progress_write_time = now
+        except Exception:
+            # 日志写入不应影响主流程，失败时打印到原始 stdout
+            try:
+                self._orig_stdout.write(f"[日志写入错误] {ts}\n")
+                self._orig_stdout.flush()
+            except Exception:
+                pass
+
+        # 控制台仍按每次调用刷新进度行（覆盖式输出）
+        try:
+            self._orig_stdout.write(f"\r{line}{padding}")
+            self._orig_stdout.flush()
+        except Exception:
+            pass
 
     def close(self):
         """关闭日志器：输出耗时统计、恢复原始流。"""

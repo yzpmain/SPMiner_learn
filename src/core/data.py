@@ -117,6 +117,8 @@ class OTFSynDataSource(DataSource):
     def gen_data_loaders(self, size, batch_size, train=True,
         use_distributed_sampling=False):
         loaders = []
+        device = utils.get_device()
+        pin_memory = True if device.type == 'cuda' else False
         for i in range(2):
             dataset = combined_syn.get_dataset("graph", size // 2,
                 np.arange(self.min_size + 1, self.max_size + 1))
@@ -126,7 +128,7 @@ class OTFSynDataSource(DataSource):
             loaders.append(TorchDataLoader(dataset,
                 collate_fn=Batch.collate([]), batch_size=batch_size // 2 if i
                 == 0 else batch_size // 2,
-                sampler=sampler, shuffle=False))
+                sampler=sampler, shuffle=False, pin_memory=pin_memory))
         loaders.append([None]*(size // batch_size))
         return loaders
 
@@ -218,10 +220,11 @@ class OTFSynDataSource(DataSource):
                             else torch.zeros(1))
                 return g
             neg_target = neg_target.apply_transform(add_anchor)
-        pos_target = augmenter.augment(pos_target).to(utils.get_device())
-        pos_query = augmenter.augment(pos_query).to(utils.get_device())
-        neg_target = augmenter.augment(neg_target).to(utils.get_device())
-        neg_query = augmenter.augment(neg_query).to(utils.get_device())
+        device = utils.get_device()
+        pos_target = augmenter.augment(pos_target).to(device)
+        pos_query = augmenter.augment(pos_query).to(device)
+        neg_target = augmenter.augment(neg_target).to(device)
+        neg_query = augmenter.augment(neg_query).to(device)
         #print(len(pos_target.G[0]), len(pos_query.G[0]))
         return pos_target, pos_query, neg_target, neg_query
 
@@ -349,6 +352,8 @@ class DiskImbalancedDataSource(OTFSynDataSource):
     def gen_data_loaders(self, size, batch_size, train=True,
         use_distributed_sampling=False):
         loaders = []
+        device = utils.get_device()
+        pin_memory = True if device.type == 'cuda' else False
         for i in range(2):
             neighs = []
             for j in range(size // 2):
@@ -359,7 +364,7 @@ class DiskImbalancedDataSource(OTFSynDataSource):
             loaders.append(TorchDataLoader(dataset,
                 collate_fn=Batch.collate([]), batch_size=batch_size // 2 if i
                 == 0 else batch_size // 2,
-                sampler=None, shuffle=False))
+                sampler=None, shuffle=False, pin_memory=pin_memory))
         loaders.append([None]*(size // batch_size))
         return loaders
 

@@ -24,6 +24,8 @@ from collections import defaultdict
 import networkx as nx
 import pickle
 
+from src.core.cli import setup_runtime
+
 def make_plant_dataset(size):
     """构造带植入模式的合成图数据集。
 
@@ -195,6 +197,8 @@ def main():
     parse_encoder(parser)
     parse_decoder(parser)
     args = parser.parse_args()
+
+    setup_runtime(args)
 
     with RunLogger(args):
         if not os.path.exists("plots/cluster"):

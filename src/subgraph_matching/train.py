@@ -21,6 +21,7 @@ import torch.optim as optim
 from deepsnap.batch import Batch
 from torch.utils.tensorboard import SummaryWriter
 
+from src.core.cli import setup_runtime
 from src.core import data
 from src.core import dataset_registry
 from src.core import models
@@ -100,6 +101,7 @@ def train(args, model, logger, in_queue, out_queue):
     in_queue: 交叉点计算工作进程的输入队列
     out_queue: 交叉点计算工作进程的输出队列
     """
+    setup_runtime(args)
     # 主优化器负责图嵌入器的参数更新。
     scheduler, opt = utils.build_optimizer(args, model.parameters())
     if args.method_type == "order":
@@ -210,11 +212,12 @@ def train_loop(args):
     for batch_target, batch_neg_target, batch_neg_query in zip(*loaders):
         pos_a, pos_b, neg_a, neg_b = data_source.gen_batch(batch_target,
             batch_neg_target, batch_neg_query, False)
+        device = utils.get_device()
         if pos_a:
-            pos_a = pos_a.to(torch.device("cpu"))
-            pos_b = pos_b.to(torch.device("cpu"))
-        neg_a = neg_a.to(torch.device("cpu"))
-        neg_b = neg_b.to(torch.device("cpu"))
+            pos_a = pos_a.to(device)
+            pos_b = pos_b.to(device)
+        neg_a = neg_a.to(device)
+        neg_b = neg_b.to(device)
         test_pts.append((pos_a, pos_b, neg_a, neg_b))
 
     workers = []
@@ -261,6 +264,8 @@ def main(force_test=False):
     utils.parse_optimizer(parser)
     parse_encoder(parser)
     args = parser.parse_args()
+
+    setup_runtime(args)
 
     if force_test:
         args.test = True

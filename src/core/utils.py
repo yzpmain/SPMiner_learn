@@ -62,20 +62,12 @@ def sample_neigh(graphs, size, max_attempts=100):
 
 cached_masks = None
 def vec_hash(v):
-    """将向量映射为稳定的哈希特征。
-
-    这里通过固定随机掩码与 Python 哈希组合，构造可重复的离散编码，
-    用于后续 WL 迭代中的节点表征更新。
-    """
     global cached_masks
     if cached_masks is None:
         random.seed(2019)
         cached_masks = [random.getrandbits(32) for i in range(len(v))]
-    #v = [hash(tuple(v)) ^ mask for mask in cached_masks]
-    v = [hash(v[i]) ^ mask for i, mask in enumerate(cached_masks)]
-    #v = [np.sum(v) for mask in cached_masks]
+    v = [int(hash(v[i]) % (2**31 - 1)) ^ mask for i, mask in enumerate(cached_masks)]
     return v
-
 def wl_hash(g, dim=64, node_anchored=False):
     """计算图的 WL 风格哈希签名。
 
@@ -90,14 +82,14 @@ def wl_hash(g, dim=64, node_anchored=False):
         可哈希的 tuple 签名。
     """
     g = nx.convert_node_labels_to_integers(g)
-    vecs = np.zeros((len(g), dim), dtype=int)
+    vecs = np.zeros((len(g), dim), dtype=object)
     if node_anchored:
         for v in g.nodes:
             if g.nodes[v]["anchor"] == 1:
                 vecs[v] = 1
                 break
     for i in range(len(g)):
-        newvecs = np.zeros((len(g), dim), dtype=int)
+        newvecs = np.zeros((len(g), dim), dtype=object)
         for n in g.nodes:
             newvecs[n] = vec_hash(np.sum(vecs[list(g.neighbors(n)) + [n]],
                 axis=0))
@@ -245,10 +237,29 @@ def get_device():
     """懒加载运行设备（优先 CUDA）。"""
     global device_cache
     if device_cache is None:
-        device_cache = torch.device("cuda") if torch.cuda.is_available() \
-            else torch.device("cpu")
-        #device_cache = torch.device("cpu")
+        # Respect optional override via set_use_gpu().
+        try:
+            use_gpu = USE_GPU
+        except NameError:
+            use_gpu = True
+        if use_gpu and torch.cuda.is_available():
+            device_cache = torch.device("cuda")
+        else:
+            device_cache = torch.device("cpu")
     return device_cache
+
+
+# Global switch to allow forcing CPU even if CUDA is available.
+USE_GPU = True
+
+def set_use_gpu(flag: bool):
+    """设置是否允许使用 GPU。
+
+    调用后会清空内部缓存以便下一次调用 `get_device()` 根据新设置返回设备。
+    """
+    global USE_GPU, device_cache
+    USE_GPU = bool(flag)
+    device_cache = None
 
 def parse_optimizer(parser):
     """向解析器注册优化器相关参数。"""
@@ -310,7 +321,8 @@ def batch_nx_graphs(graphs, anchors=None):
 
     batch = Batch.from_data_list([DSGraph(g) for g in graphs])
     batch = augmenter.augment(batch)
-    batch = batch.to(get_device())
+    device = get_device()
+    batch = batch.to(device)
     return batch
 
 

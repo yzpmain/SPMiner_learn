@@ -39,7 +39,6 @@ MINE_CONFIG = {
     "sample_method": "tree",
     "min_neighborhood_size": 20,
     "max_neighborhood_size": 29,
-    "n_neighborhoods": 2000,
     "frontier_top_k": 5,
     "n_workers": 4,
 }

@@ -73,7 +73,7 @@ def parse_encoder(parser, arg_str=None):
                         eval_interval=1000,
                         model_path="ckpt/model.pt",
                         val_size=4096,
-                        node_anchored=True)
+                        node_anchored=False)
 
     # 注意：这里不直接 parse，统一由外部主程序解析。
     #return enc_parser.parse_args(arg_str)

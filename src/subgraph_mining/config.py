@@ -55,7 +55,7 @@ def parse_decoder(parser):
                         search_strategy="greedy",
                         out_batch_size=10,
                         frontier_top_k=5,
-                        node_anchored=True)
+                        node_anchored=False)
 
     # 挖掘阶段会复用编码器参数中的 dataset 与 batch_size，
     # 这里覆盖为更适合解码场景的默认值。

@@ -41,11 +41,14 @@ if __name__ == "__main__":
         ))
         plot_path = artifact_dir / "pattern-counts.png"
 
+        counts_dir = args.counts_path
+        if os.path.isfile(counts_dir):
+            counts_dir = os.path.dirname(counts_dir)
         all_counts = {}
-        for fn in os.listdir(args.counts_path):
+        for fn in os.listdir(counts_dir):
             if not fn.endswith(".json"): continue
 
-            with open(os.path.join(args.counts_path, fn), "r") as f:
+            with open(os.path.join(counts_dir, fn), "r") as f:
                 graphlet_lens, n_matches, n_matches_bl = json.load(f)
                 name = fn[:-5]
                 all_counts[name] = graphlet_lens, n_matches

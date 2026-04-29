@@ -270,7 +270,10 @@ if __name__ == "__main__":
         if args.dataset == "analyze":
             with open(args.analysis_path, "rb") as f:
                 cand_patterns, _ = pickle.load(f)
-                queries = [q for score, q in cand_patterns[10]][:200]
+                # 取第一个可用尺寸的模式（优先取 >= 3 的尺寸）
+                avail_sizes = sorted(cand_patterns.keys())
+                target_size = next((s for s in avail_sizes if s >= 3), avail_sizes[0]) if avail_sizes else 10
+                queries = [q for score, q in cand_patterns[target_size]][:200]
             dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
         else:
             normalized_dataset, dataset, _ = CoreFacade.load_stage_dataset(args.dataset, "count")

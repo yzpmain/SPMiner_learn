@@ -37,7 +37,7 @@ def gen_alignment_matrix(model, query, target, method_type="order"):
             pred = model(embs[1].unsqueeze(0), embs[0].unsqueeze(0))
             raw_pred = model.predict(pred)
             if method_type == "order":
-                raw_pred = torch.log(raw_pred)
+                raw_pred = torch.log(torch.clamp(raw_pred, min=1e-8))
             elif method_type == "mlp":
                 raw_pred = raw_pred[0][1]
             mat[i][j] = raw_pred.item()

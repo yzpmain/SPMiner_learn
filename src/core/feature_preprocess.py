@@ -52,7 +52,7 @@ def norm(edge_index, num_nodes, edge_weight=None, improved=False, dtype=None):
 def compute_identity(edge_index, n, k):
     edge_weight = torch.ones((edge_index.size(1),), dtype=torch.float, device=edge_index.device)
     edge_index, edge_weight = pyg_utils.add_remaining_self_loops(edge_index, edge_weight, 1, n)
-    adj_sparse = torch.sparse.FloatTensor(edge_index, edge_weight, torch.Size([n, n]))
+    adj_sparse = torch.sparse_coo_tensor(edge_index, edge_weight, (n, n))
     adj = adj_sparse.to_dense()
 
     deg = torch.diag(torch.sum(adj, -1))
@@ -210,9 +210,9 @@ class Preprocess(nn.Module):
         feature_dims = self._resolve_feature_dims()
 
         if method == "add":
-            self.module_dict = {key: nn.Linear(aug_dim, dim_in) for key, aug_dim in zip(features, feature_dims)}
+            self.module_dict = nn.ModuleDict({key: nn.Linear(aug_dim, dim_in) for key, aug_dim in zip(features, feature_dims)})
         else:
-            self.module_dict = {}
+            self.module_dict = nn.ModuleDict({})
 
     def _resolve_method(self) -> str:
         return self._config.method if self._config is not None else AUGMENT_METHOD

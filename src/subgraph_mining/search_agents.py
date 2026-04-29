@@ -155,8 +155,8 @@ class MCTSSearchAgent(SearchAgent):
 
         info("MCTS exploring size {} ({} distinct seeds)".format(
             self.max_size, len(self.visited_seed_nodes)))
-        for simulation_n in tqdm(range(self.n_trials //
-            (self.max_pattern_size+1-self.min_pattern_size))):
+        for simulation_n in tqdm(range(max(1, self.n_trials //
+            (self.max_pattern_size+1-self.min_pattern_size)))):
             # 选择种子节点
             best_graph_idx, best_start_node, best_score = None, None, -float("inf")
             for cand_graph_idx, cand_start_node in self.visited_seed_nodes:
@@ -407,6 +407,8 @@ class GreedySearchAgent(SearchAgent):
 
         cand_patterns_uniq = []
         for pattern_size in range(self.min_pattern_size, self.max_pattern_size+1):
+            if not self.counts[pattern_size]:
+                continue
             if self.rank_method == "hybrid":
                 cur_rank_method = "margin" if len(max(
                     self.counts[pattern_size].values(), key=len)) < 3 else "counts"

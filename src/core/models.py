@@ -92,11 +92,11 @@ class OrderEmbedder(nn.Module):
         # e 表示违反序关系的程度：
         # 若 emb_bs <= emb_as 则该项越接近 0 越好。
         e = torch.sum(torch.max(torch.zeros_like(emb_as,
-            device=utils.get_device()), emb_bs - emb_as)**2, dim=1)
+            device=emb_as.device), emb_bs - emb_as)**2, dim=1)
 
         margin = self.margin
         e[labels == 0] = torch.max(torch.tensor(0.0,
-            device=utils.get_device()), margin - e)[labels == 0]
+            device=labels.device), margin - e)[labels == 0]
 
         relation_loss = torch.sum(e)
 
@@ -152,10 +152,8 @@ class SkipLastGNN(nn.Module):
         self.post_mp = nn.Sequential(
             nn.Linear(post_input_dim, hidden_dim), nn.Dropout(args.dropout),
             nn.LeakyReLU(0.1),
-            nn.Linear(hidden_dim, output_dim),
-            nn.ReLU(),
             nn.Linear(hidden_dim, 256), nn.ReLU(),
-            nn.Linear(256, hidden_dim))
+            nn.Linear(256, output_dim))
         self.skip = args.skip
         self.conv_type = args.conv_type
 

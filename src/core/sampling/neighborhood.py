@@ -56,6 +56,8 @@ def sample_neigh(graphs: list[nx.Graph], size: int, max_attempts: int = 100):
         idx = dist.rvs()
         graph = graphs[idx]
         neigh = frontier_sample_nodes(graph, size)
+        if len(neigh) == size:
+            return graph, neigh
 
     warning(f"Could not sample neighborhood of size {size} after {max_attempts} attempts")
     return graph, neigh

@@ -87,6 +87,7 @@ def load_dataset(name):
     if isinstance(dataset, list) and len(dataset) == 1 and isinstance(dataset[0], nx.Graph):
         return [dataset[0]], [dataset[0]], task
 
+    train, test = [], []
     if task == "graph":
         train_len = int(0.8 * len(dataset))
         train, test = [], []
@@ -132,9 +133,16 @@ class OTFSynDataSource(DataSource):
         for i in range(2):
             dataset = combined_syn.get_dataset("graph", size // 2,
                 np.arange(self.min_size + 1, self.max_size + 1))
-            sampler = torch.utils.data.distributed.DistributedSampler(
-                dataset, num_replicas=hvd.size(), rank=hvd.rank()) if \
-                    use_distributed_sampling else None
+            if use_distributed_sampling:
+                try:
+                    import horovod.torch as hvd
+                except ModuleNotFoundError:
+                    raise ModuleNotFoundError(
+                        "分布式训练需要 horovod，请安装：pip install horovod")
+                sampler = torch.utils.data.distributed.DistributedSampler(
+                    dataset, num_replicas=hvd.size(), rank=hvd.rank())
+            else:
+                sampler = None
             loaders.append(TorchDataLoader(dataset,
                 collate_fn=Batch.collate([]), batch_size=batch_size // 2 if i
                 == 0 else batch_size // 2,

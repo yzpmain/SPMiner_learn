@@ -107,8 +107,9 @@ def setup_runtime(args) -> torch.device:
     if hasattr(args, "use_gpu"):
         try:
             utils.set_use_gpu(bool(args.use_gpu))
-        except Exception:
-            pass
+        except Exception as e:
+            from src.logger import warning
+            warning("set_use_gpu failed: {}".format(e))
 
     seed: Optional[int] = getattr(args, "seed", None)
     if seed is not None:

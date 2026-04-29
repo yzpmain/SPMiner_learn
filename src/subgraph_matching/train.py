@@ -57,6 +57,11 @@ def make_data_source(args):
     """
     return CoreFacade.make_matching_data_source(args)
 
+class _PrefetchError:
+    """预取线程异常哨兵，携带原始异常供主线程重抛。"""
+    def __init__(self, exc):
+        self.exc = exc
+
 def _prefetch_worker(data_source, loader_iter, prefetch_queue, cancel_event, max_batches):
     """后台线程：在 GPU 计算的同时预取下一批数据。"""
     for _ in range(max_batches):
@@ -68,7 +73,11 @@ def _prefetch_worker(data_source, loader_iter, prefetch_queue, cancel_event, max
             return
         if cancel_event.is_set():
             return
-        result = data_source.gen_batch(*batch, True)
+        try:
+            result = data_source.gen_batch(*batch, True)
+        except Exception as e:
+            prefetch_queue.put(_PrefetchError(e))
+            return
         prefetch_queue.put(result)
 
 
@@ -153,7 +162,10 @@ def train(args, model, logger, in_queue, out_queue):
                 break
 
             # 从预取队列获取（通常已有数据，无需等待）
-            pos_a, pos_b, neg_a, neg_b = prefetch_queue.get()
+            item = prefetch_queue.get()
+            if isinstance(item, _PrefetchError):
+                raise RuntimeError("预取线程异常") from item.exc
+            pos_a, pos_b, neg_a, neg_b = item
 
             loss, acc = train_step(
                 model, pos_a, pos_b, neg_a, neg_b, opt,

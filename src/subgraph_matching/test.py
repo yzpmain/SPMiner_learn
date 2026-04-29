@@ -1,7 +1,10 @@
+import os
+
 from src.core import utils
 from src.logger import info, warning
 from collections import defaultdict
 from datetime import datetime
+import numpy as np
 from sklearn.metrics import roc_auc_score, confusion_matrix
 from sklearn.metrics import precision_recall_curve, average_precision_score
 import torch
@@ -24,6 +27,15 @@ def compute_metrics(pred, labels, raw_pred):
     labels_np = labels.detach().cpu().numpy()
     raw_pred_np = raw_pred.detach().cpu().numpy()
     pred_np = pred.detach().cpu().numpy()
+    n_classes = len(np.unique(labels_np))
+    if n_classes < 2:
+        # 单类时无法计算 AUROC / PR / 混淆矩阵，返回占位值。
+        metrics = {
+            "acc": acc.item(), "prec": prec, "recall": recall,
+            "auroc": float("NaN"), "avg_prec": float("NaN"),
+            "tn": 0, "fp": 0, "fn": 0, "tp": int(torch.sum(labels).item()),
+        }
+        return metrics, labels_np, raw_pred_np, pred_np
     auroc = roc_auc_score(labels_np, raw_pred_np)
     avg_prec = average_precision_score(labels_np, raw_pred_np)
     tn, fp, fn, tp = confusion_matrix(labels_np, pred_np).ravel()
@@ -59,6 +71,7 @@ def log_checkpoint_metrics(logger, metrics, batch_n, args, model, epoch):
     logger.add_scalar("FP/test", metrics["fp"], batch_n)
     logger.add_scalar("FN/test", metrics["fn"], batch_n)
     info("Checkpoint saved → {}".format(args.model_path))
+    os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
     torch.save(model.state_dict(), args.model_path)
 
 

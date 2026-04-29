@@ -41,13 +41,16 @@ class PatternGrowthPipeline:
         start_time = time.time()
         graphs = self._prepare_graphs()
         neighs = self._sample_neighborhoods(graphs)
-        embs = self._encode_embeddings(neighs, graphs)
+        anchors = getattr(self, "_anchors", None)
+        embs = self._encode_embeddings(neighs, graphs, anchors=anchors)
         out_graphs = self._run_search(graphs, embs)
         elapsed = time.time() - start_time
         info("Total time: {:.1f}s ({:.1f}min)".format(elapsed, elapsed / 60))
         self._visualize_patterns(out_graphs)
         self._serialize_patterns(out_graphs)
         self._write_manifest(out_graphs)
+        return out_graphs
+
         return out_graphs
 
     def _prepare_graphs(self):
@@ -104,6 +107,7 @@ class PatternGrowthPipeline:
                         neighs.append(neigh)
 
         elif args.sample_method == "tree":
+            self._anchors = []
             for _ in tqdm(range(args.n_neighborhoods)):
                 graph, nodes = utils.sample_neigh(
                     graphs,
@@ -114,27 +118,29 @@ class PatternGrowthPipeline:
                 neigh.add_edge(0, 0)
                 neighs.append(neigh)
                 if args.node_anchored:
-                    anchors.append(0)
+                    self._anchors.append(0)
 
         return neighs
 
-    def _encode_embeddings(self, neighs, graphs):
+    def _encode_embeddings(self, neighs, graphs, anchors=None):
         """批量编码邻域嵌入。"""
         args = self.args
         section("嵌入编码")
         embs = []
+        anchors_iter = anchors or []
         for i in range(0, len(neighs), args.batch_size):
             batch_neighs = neighs[i:i + args.batch_size]
+            batch_anchors = anchors_iter[i:i + args.batch_size] or None
             with torch.no_grad():
                 batch = utils.batch_nx_graphs(
                     batch_neighs,
-                    anchors=None,  # anchors handled internally if node_anchored
+                    anchors=batch_anchors if args.node_anchored else None,
                 )
                 emb = self.model.emb_model(batch)
             embs.append(emb)
 
         if args.analyze:
-            embs_np = torch.stack(embs).numpy()
+            embs_np = torch.stack(embs).cpu().numpy()
             plt.scatter(embs_np[:, 0], embs_np[:, 1], label="node neighborhood")
 
         return embs

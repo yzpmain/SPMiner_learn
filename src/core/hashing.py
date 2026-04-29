@@ -17,16 +17,18 @@ __all__ = [
     "wl_hash",
 ]
 
-cached_masks: list[int] | None = None
+# 按向量长度缓存的掩码表，避免不同维度向量共用掩码导致错位。
+_masks_by_length: dict[int, list[int]] = {}
 
 
 def vec_hash(v: list[Hashable]) -> list[int]:
-    """Vector hashing with cached random masks."""
-    global cached_masks
-    if cached_masks is None:
-        random.seed(2019)
-        cached_masks = [random.getrandbits(32) for _ in range(len(v))]
-    v = [int(hash(v[i]) % (2**31 - 1)) ^ mask for i, mask in enumerate(cached_masks)]
+    """Vector hashing with cached random masks (keyed by vector length)."""
+    length = len(v)
+    if length not in _masks_by_length:
+        rng = random.Random(2019)
+        _masks_by_length[length] = [rng.getrandbits(32) for _ in range(length)]
+    masks = _masks_by_length[length]
+    v = [int(hash(v[i]) % (2**31 - 1)) ^ mask for i, mask in enumerate(masks)]
     return v
 
 

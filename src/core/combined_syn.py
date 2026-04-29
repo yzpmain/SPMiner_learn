@@ -6,6 +6,15 @@ import numpy as np
 
 import deepsnap.dataset as dataset
 
+__all__ = [
+    "ERGenerator",
+    "WSGenerator",
+    "BAGenerator",
+    "PowerLawClusterGenerator",
+    "get_generator",
+    "get_dataset",
+]
+
 class ERGenerator(dataset.Generator):
     def __init__(self, sizes, p_alpha=1.3, **kwargs):
         super(ERGenerator, self).__init__(sizes, **kwargs)

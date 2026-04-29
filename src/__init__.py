@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import platform
 
+__all__: list[str] = []
+
 
 def _configure_openmp_runtime() -> None:
     """Avoid OpenMP duplicate-runtime aborts on Windows.

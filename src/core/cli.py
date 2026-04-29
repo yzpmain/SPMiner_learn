@@ -15,6 +15,11 @@ import torch
 
 from src.core import utils
 
+__all__ = [
+    "add_runtime_args",
+    "setup_runtime",
+]
+
 
 def add_runtime_args(
     parser: argparse.ArgumentParser,
@@ -24,6 +29,7 @@ def add_runtime_args(
     include_tag: bool = False,
     include_n_workers: bool = False,
     include_progress_write_interval: bool = False,
+    include_output_policy: bool = False,
 ) -> argparse.ArgumentParser:
     """Register cross-cutting runtime flags on a parser.
 
@@ -70,6 +76,27 @@ def add_runtime_args(
             type=float,
             default=1.0,
             help="progress 写入 run.log 的最小间隔（秒）",
+        )
+
+    if include_output_policy:
+        runtime_parser.add_argument(
+            "--output_root",
+            type=str,
+            default="results",
+            help="统一产物输出根目录（默认 results）",
+        )
+        runtime_parser.add_argument(
+            "--output_strategy",
+            type=str,
+            choices=["version", "overwrite"],
+            default="version",
+            help="输出冲突策略：version 自动版本化，overwrite 直接覆盖",
+        )
+        runtime_parser.add_argument(
+            "--output_tag",
+            type=str,
+            default="",
+            help="产物目录附加标签（用于区分实验批次）",
         )
 
     return parser

@@ -2,6 +2,8 @@ import argparse
 
 from src.core.cli import add_runtime_args
 
+__all__ = ["parse_encoder"]
+
 def parse_encoder(parser, arg_str=None):
     """注册子图匹配（编码器）阶段参数。
 
@@ -51,7 +53,8 @@ def parse_encoder(parser, arg_str=None):
     enc_parser.add_argument('--test', action="store_true")
     add_runtime_args(enc_parser, include_gpu=True, include_seed=True,
         include_tag=True, include_n_workers=True,
-        include_progress_write_interval=True)
+        include_progress_write_interval=True,
+        include_output_policy=True)
 
     # 默认配置偏向稳定训练：SAGE 卷积 + order embedding。
     enc_parser.set_defaults(conv_type='SAGE',

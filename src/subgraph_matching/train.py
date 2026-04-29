@@ -22,25 +22,29 @@ from deepsnap.batch import Batch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.core.cli import setup_runtime
-from src.core import data
-from src.core import dataset_registry
-from src.core import models
+from src.core.artifacts import choose_cli_output_path, task_output_dir, write_manifest
+from src.core import CoreFacade
 from src.core import utils
 from src.subgraph_matching.config import parse_encoder
 from src.subgraph_matching.test import validation
 from src.logger import RunLogger, info, section, progress
 
+__all__ = [
+    "build_model",
+    "make_data_source",
+    "train_step",
+    "train",
+    "train_loop",
+    "main",
+]
+
 def build_model(args):
     """根据命令行参数构建编码器模型，并在测试模式下加载权重。"""
-    if args.method_type == "order":
-        model = models.OrderEmbedder(1, args.hidden_dim, args)
-    elif args.method_type == "mlp":
-        model = models.BaselineMLP(1, args.hidden_dim, args)
-    model.to(utils.get_device())
-    if args.test and args.model_path:
-        model.load_state_dict(torch.load(args.model_path,
-            map_location=utils.get_device()))
-    return model
+    return CoreFacade.build_model(
+        args,
+        for_inference=bool(args.test),
+        load_weights=bool(args.test and args.model_path),
+    )
 
 def make_data_source(args):
     """按数据集名称创建对应的数据源对象。
@@ -51,32 +55,7 @@ def make_data_source(args):
 
     另外支持 balanced / imbalanced 两种采样方式。
     """
-    raw_dataset = args.dataset.strip().lower()
-
-    # 仅识别尾缀采样模式，避免 reddit-binary / as-733 这类合法名称被误拆分。
-    mode = "balanced"
-    base_dataset = raw_dataset
-    if raw_dataset.endswith("-balanced"):
-        base_dataset = raw_dataset[: -len("-balanced")]
-        mode = "balanced"
-    elif raw_dataset.endswith("-imbalanced"):
-        base_dataset = raw_dataset[: -len("-imbalanced")]
-        mode = "imbalanced"
-
-    if base_dataset.startswith("syn"):
-        if mode == "balanced":
-            data_source = data.OTFSynDataSource(node_anchored=args.node_anchored)
-        else:
-            data_source = data.OTFSynImbalancedDataSource(node_anchored=args.node_anchored)
-    else:
-        normalized_dataset = dataset_registry.validate_dataset_name(base_dataset, "train-disk")
-        if mode == "balanced":
-            data_source = data.DiskDataSource(normalized_dataset,
-                node_anchored=args.node_anchored)
-        else:
-            data_source = data.DiskImbalancedDataSource(normalized_dataset,
-                node_anchored=args.node_anchored)
-    return data_source
+    return CoreFacade.make_matching_data_source(args)
 
 def _prefetch_worker(data_source, loader_iter, prefetch_queue, cancel_event, max_batches):
     """后台线程：在 GPU 计算的同时预取下一批数据。"""
@@ -93,6 +72,45 @@ def _prefetch_worker(data_source, loader_iter, prefetch_queue, cancel_event, max
         prefetch_queue.put(result)
 
 
+def train_step(model, pos_a, pos_b, neg_a, neg_b, opt, scheduler=None,
+               clf_opt=None, method_type="order"):
+    """单步训练：前向 → 损失 → 反向 → 参数更新。返回 (loss, acc)。"""
+    model.train()
+    model.zero_grad()
+
+    emb_as = model.emb_model(pos_a)
+    emb_bs = model.emb_model(pos_b)
+    neg_as = model.emb_model(neg_a)
+    neg_bs = model.emb_model(neg_b)
+    emb_as = torch.cat([emb_as, neg_as])
+    emb_bs = torch.cat([emb_bs, neg_bs])
+    n_pos = pos_a.num_graphs
+
+    labels = torch.tensor([1]*n_pos + [0]*neg_a.num_graphs).to(
+        utils.get_device())
+    pred = model(emb_as, emb_bs)
+    loss = model.criterion(pred, None, labels)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()
+    if scheduler:
+        scheduler.step()
+
+    if method_type == "order":
+        with torch.no_grad():
+            pred = model.predict(pred)
+        model.clf_model.zero_grad()
+        pred = model.clf_model(pred.unsqueeze(1))
+        criterion = nn.NLLLoss()
+        clf_loss = criterion(pred, labels)
+        clf_loss.backward()
+        clf_opt.step()
+
+    pred = pred.argmax(dim=-1)
+    acc = torch.mean((pred == labels).type(torch.float))
+    return loss.item(), acc.item()
+
+
 def train(args, model, logger, in_queue, out_queue):
     """训练序嵌入模型。
 
@@ -104,6 +122,7 @@ def train(args, model, logger, in_queue, out_queue):
     setup_runtime(args)
     # 主优化器负责图嵌入器的参数更新。
     scheduler, opt = utils.build_optimizer(args, model.parameters())
+    clf_opt = None
     if args.method_type == "order":
         # order 模型额外有一个二分类头，需要单独训练。
         clf_opt = optim.Adam(model.clf_model.parameters(), lr=args.lr)
@@ -136,53 +155,27 @@ def train(args, model, logger, in_queue, out_queue):
             # 从预取队列获取（通常已有数据，无需等待）
             pos_a, pos_b, neg_a, neg_b = prefetch_queue.get()
 
-            # 训练单个 batch：正样本对子图关系应成立，负样本对不成立。
-            model.train()
-            model.zero_grad()
-
-            # 分别计算正负样本的嵌入
-            emb_as = model.emb_model(pos_a)
-            emb_bs = model.emb_model(pos_b)
-            neg_as = model.emb_model(neg_a)
-            neg_bs = model.emb_model(neg_b)
-            emb_as = torch.cat([emb_as, neg_as])
-            emb_bs = torch.cat([emb_bs, neg_bs])
-            n_pos = pos_a.num_graphs
-
-            labels = torch.tensor([1]*n_pos + [0]*neg_a.num_graphs).to(
-                utils.get_device())
-            intersect_embs = None
-            pred = model(emb_as, emb_bs)
-            loss = model.criterion(pred, intersect_embs, labels)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-            if scheduler:
-                scheduler.step()
-
-            if args.method_type == "order":
-                # order 模型用额外的分类器把"违反量"映射为二分类概率。
-                with torch.no_grad():
-                    pred = model.predict(pred)
-                model.clf_model.zero_grad()
-                pred = model.clf_model(pred.unsqueeze(1))
-                criterion = nn.NLLLoss()
-                clf_loss = criterion(pred, labels)
-                clf_loss.backward()
-                clf_opt.step()
-            pred = pred.argmax(dim=-1)
-            acc = torch.mean((pred == labels).type(torch.float))
-
-            out_queue.put(("step", (loss.item(), acc)))
+            loss, acc = train_step(
+                model, pos_a, pos_b, neg_a, neg_b, opt,
+                scheduler=scheduler, clf_opt=clf_opt,
+                method_type=args.method_type,
+            )
+            out_queue.put(("step", (loss, acc)))
 
         cancel_event.set()
 
 def train_loop(args):
     """训练主循环：启动 worker、准备验证集并周期性评估。"""
-    if not os.path.exists(os.path.dirname(args.model_path)):
-        os.makedirs(os.path.dirname(args.model_path))
-    if not os.path.exists("plots/"):
-        os.makedirs("plots/")
+    artifact_dir = task_output_dir(args, "matching", args.dataset)
+    args.model_path = str(choose_cli_output_path(
+        args,
+        args.model_path,
+        default_cli_path="ckpt/model.pt",
+        suggested_default_path=artifact_dir / "model.pt",
+    ))
+    args.pr_curve_path = str(artifact_dir / "precision-recall-curve.png")
+    args.tb_log_dir = str(artifact_dir / "tb")
+    os.makedirs(args.tb_log_dir, exist_ok=True)
 
     info("Starting {} workers".format(args.n_workers))
     in_queue, out_queue = mp.Queue(), mp.Queue()
@@ -194,7 +187,7 @@ def train_loop(args):
         "margin", "dataset", "max_graph_size", "skip"]
     args_str = ".".join(["{}={}".format(k, v)
         for k, v in sorted(vars(args).items()) if k in record_keys])
-    logger = SummaryWriter(comment=args_str)
+    logger = SummaryWriter(log_dir=args.tb_log_dir, comment=args_str)
 
     model = build_model(args)
     model.share_memory()
@@ -250,6 +243,17 @@ def train_loop(args):
         in_queue.put(("done", None))
     for worker in workers:
         worker.join()
+
+    write_manifest(
+        artifact_dir / "manifest.json",
+        args,
+        outputs={
+            "checkpoint": args.model_path,
+            "tb_log_dir": args.tb_log_dir,
+            "pr_curve": args.pr_curve_path,
+        },
+        task="matching",
+    )
 
 def main(force_test=False):
     """命令行入口。

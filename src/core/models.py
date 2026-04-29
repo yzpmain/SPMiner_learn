@@ -14,6 +14,14 @@ from src.logger import warning
 from src.core import utils
 from src.core import feature_preprocess
 
+__all__ = [
+    "BaselineMLP",
+    "OrderEmbedder",
+    "SkipLastGNN",
+    "SAGEConv",
+    "GINConv",
+]
+
 # GNN -> 拼接 -> MLP 图分类基线模型
 class BaselineMLP(nn.Module):
     """最简单的双图拼接分类基线。

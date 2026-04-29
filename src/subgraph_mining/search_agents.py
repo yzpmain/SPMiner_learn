@@ -12,6 +12,12 @@ from collections import defaultdict
 import networkx as nx
 import pickle
 
+__all__ = [
+    "SearchAgent",
+    "MCTSSearchAgent",
+    "GreedySearchAgent",
+]
+
 class SearchAgent:
     """ 用于在嵌入空间中识别频繁子图的搜索策略类。
 
@@ -23,7 +29,8 @@ class SearchAgent:
     """
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, model_type="order",
-        out_batch_size=20, frontier_top_k=0):
+        out_batch_size=20, frontier_top_k=0, analysis_out_path=None,
+        analysis_plot_path=None):
         """ 通过在嵌入空间中游走进行子图模式搜索。
 
         参数说明：
@@ -50,6 +57,8 @@ class SearchAgent:
         self.model_type = model_type
         self.out_batch_size = out_batch_size
         self.frontier_top_k = frontier_top_k
+        self.analysis_out_path = analysis_out_path or "results/analyze.p"
+        self.analysis_plot_path = analysis_plot_path or "plots/analyze.png"
 
     def run_search(self, n_trials=1000): 
         """统一搜索驱动器。
@@ -104,7 +113,8 @@ class SearchAgent:
 class MCTSSearchAgent(SearchAgent):
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, model_type="order",
-        out_batch_size=20, c_uct=0.7, frontier_top_k=0):
+        out_batch_size=20, c_uct=0.7, frontier_top_k=0,
+        analysis_out_path=None, analysis_plot_path=None):
         """ 子图模式搜索的 MCTS 实现。
         使用 MCTS 策略搜索最常见的模式。
 
@@ -114,7 +124,9 @@ class MCTSSearchAgent(SearchAgent):
         super().__init__(min_pattern_size, max_pattern_size, model, dataset,
             embs, node_anchored=node_anchored, analyze=analyze,
             model_type=model_type, out_batch_size=out_batch_size,
-            frontier_top_k=frontier_top_k)
+            frontier_top_k=frontier_top_k,
+            analysis_out_path=analysis_out_path,
+            analysis_plot_path=analysis_plot_path)
         self.c_uct = c_uct
         assert not analyze
 
@@ -256,7 +268,8 @@ class GreedySearchAgent(SearchAgent):
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, rank_method="counts",
         model_type="order", out_batch_size=20, n_beams=1,
-        frontier_top_k=0, max_steps=1000):
+        frontier_top_k=0, max_steps=1000, analysis_out_path=None,
+        analysis_plot_path=None):
         """子图模式搜索的贪心实现。
         算法在每一步贪心地选择下一个节点进行扩展，同时保持模式
         被预测为频繁的。选择下一动作的标准取决于子图匹配模型预测的分数
@@ -271,7 +284,9 @@ class GreedySearchAgent(SearchAgent):
         super().__init__(min_pattern_size, max_pattern_size, model, dataset,
             embs, node_anchored=node_anchored, analyze=analyze,
             model_type=model_type, out_batch_size=out_batch_size,
-            frontier_top_k=frontier_top_k)
+            frontier_top_k=frontier_top_k,
+            analysis_out_path=analysis_out_path,
+            analysis_plot_path=analysis_plot_path)
         self.rank_method = rank_method
         self.n_beams = n_beams
         self.max_steps = max_steps
@@ -376,18 +391,18 @@ class GreedySearchAgent(SearchAgent):
     def finish_search(self):
         """根据 rank_method 汇总并去重输出模式。"""
         if self.analyze:
-            info("Analysis info saved → results/analyze.p")
-            with open("results/analyze.p", "wb") as f:
+            info("Analysis info saved → {}".format(self.analysis_out_path))
+            with open(self.analysis_out_path, "wb") as f:
                 pickle.dump((self.cand_patterns, self.analyze_embs), f)
             xs, ys = [], []
             for embs_ls in self.analyze_embs:
                 for emb in embs_ls:
                     xs.append(emb[0])
                     ys.append(emb[1])
-            info("Analysis plot saved → results/analyze.png")
+            info("Analysis plot saved → {}".format(self.analysis_plot_path))
             plt.scatter(xs, ys, color="red", label="motif")
             plt.legend()
-            plt.savefig("plots/analyze.png")
+            plt.savefig(self.analysis_plot_path)
             plt.close()
 
         cand_patterns_uniq = []

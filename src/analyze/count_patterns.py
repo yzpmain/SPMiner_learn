@@ -16,8 +16,9 @@ import numpy as np
 from torch_geometric.datasets import TUDataset
 import torch_geometric.utils as pyg_utils
 
-from src.core import dataset_registry
+from src.core import CoreFacade
 from src.core import utils
+from src.core.artifacts import choose_cli_output_path, task_output_dir, write_manifest
 from src.logger import RunLogger, info, warning, section, progress
 
 from multiprocessing import Pool
@@ -28,22 +29,33 @@ import pickle
 
 from src.core.cli import add_runtime_args, setup_runtime
 
+__all__ = [
+    "count_graphlets",
+    "preprocess_query",
+    "preprocess_target",
+    "dedup_isomorphic_queries",
+]
+
 def arg_parse():
     parser = argparse.ArgumentParser(description='统计图中的图元')
     parser.add_argument('--dataset', type=str)
     parser.add_argument('--queries_path', type=str)
     parser.add_argument('--out_path', type=str)
     parser.add_argument('--count_method', type=str)
+    parser.add_argument('--analysis_path', type=str,
+                        help='analyze 模式输入文件路径')
     parser.add_argument('--max_queries', type=int,
                         help='仅统计前 max_queries 个模式，0 表示使用全部')
     parser.add_argument('--progress_every', type=int,
                         help='每处理多少个任务打印一次进度，0 表示关闭')
     parser.add_argument('--node_anchored', action="store_true")
     add_runtime_args(parser, include_gpu=False, include_seed=True,
-                     include_n_workers=True, include_progress_write_interval=True)
+                     include_n_workers=True, include_progress_write_interval=True,
+                     include_output_policy=True)
     parser.set_defaults(dataset="enzymes",
                         queries_path="results/out-patterns.p",
                         out_path="results/counts.json",
+                        analysis_path="results/analyze.p",
                         n_workers=4,
                         count_method="bin",
                         max_queries=0,
@@ -242,18 +254,27 @@ if __name__ == "__main__":
         section("模式计数")
         info("Using {} workers".format(args.n_workers))
 
+        artifact_dir = task_output_dir(args, "count", args.dataset)
+        args.out_path = str(choose_cli_output_path(
+            args,
+            args.out_path,
+            default_cli_path="results/counts.json",
+            suggested_default_path=artifact_dir / "counts.json",
+        ))
+        if args.analysis_path == "results/analyze.p":
+            args.analysis_path = str(artifact_dir / "analyze.p")
+
         if args.dataset != "analyze" and not os.path.exists(args.queries_path):
             raise FileNotFoundError(f"Queries file not found: {args.queries_path}")
 
         if args.dataset == "analyze":
-            with open("results/analyze.p", "rb") as f:
+            with open(args.analysis_path, "rb") as f:
                 cand_patterns, _ = pickle.load(f)
                 queries = [q for score, q in cand_patterns[10]][:200]
             dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
         else:
-            normalized_dataset = dataset_registry.validate_dataset_name(args.dataset, "count")
+            normalized_dataset, dataset, _ = CoreFacade.load_stage_dataset(args.dataset, "count")
             args.dataset = normalized_dataset
-            dataset, _ = dataset_registry.load_dataset_for_stage(args.dataset, "count")
 
         targets = []
         for i in range(len(dataset)):
@@ -278,3 +299,14 @@ if __name__ == "__main__":
 
         with open(args.out_path, "w") as f:
             json.dump((query_lens, n_matches, []), f)
+        info("Counts saved → {}".format(args.out_path))
+        write_manifest(
+            artifact_dir / "manifest.json",
+            args,
+            outputs={
+                "counts": args.out_path,
+                "queries": args.queries_path,
+                "analysis_input": args.analysis_path if args.dataset == "analyze" else None,
+            },
+            task="count",
+        )

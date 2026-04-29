@@ -14,6 +14,18 @@ from src.analyze.count_patterns import count_graphlets
 from src.core import dataset_registry
 from src.core.utils import load_spminer_pickle, parse_gspan_output
 
+__all__ = [
+    "key_of_file",
+    "quick_sig",
+    "match_isomorphic_patterns",
+    "evaluate_pair",
+    "collect_files_from_summary",
+    "summarize_supports",
+    "exact_support_counts",
+    "build_accuracy_table",
+    "add_runtime_metrics",
+]
+
 
 PAIR_RE = re.compile(r"n(?P<n>\d+)_k(?P<k>\d+)")
 

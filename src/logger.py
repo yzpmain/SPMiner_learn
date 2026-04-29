@@ -29,6 +29,15 @@ import subprocess
 from datetime import datetime
 from typing import Optional
 
+__all__ = [
+    "RunLogger",
+    "info",
+    "section",
+    "warning",
+    "progress",
+    "get_logger",
+]
+
 
 # ---------------------------------------------------------------------------
 # 模块级全局（用于代理函数）

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import difflib
-from typing import Tuple
+from typing import Callable, Tuple
 
 import networkx as nx
 import numpy as np
@@ -10,6 +10,100 @@ from torch_geometric.datasets import PPI, QM9, TUDataset
 
 from src.core import combined_syn
 from src.core import utils
+
+__all__ = [
+    "validate_dataset_name",
+    "normalize_dataset_name",
+    "load_dataset_for_stage",
+    "DatasetLoadResult",
+]
+
+
+from dataclasses import dataclass
+
+
+@dataclass
+class DatasetLoadResult:
+    """数据集加载结果封装。"""
+    dataset: object
+    task: str
+
+
+# ---------------------------------------------------------------------------
+# 注册表模式：将 if-elif 分支映射为 <名称, 加载器> 键值对。
+# 动态前缀数据集（syn / facebook_combined / roadnet- / plant-）单独处理。
+# ---------------------------------------------------------------------------
+
+def _load_tu(name: str, root_name: str | None = None) -> Tuple[object, str]:
+    """加载 TUDataset，默认 task='graph'。"""
+    return TUDataset(root=f"/tmp/{name.upper()}", name=root_name or name.upper()), "graph"
+
+
+def _load_facebook(name: str) -> list:
+    graph = utils.load_snap_edgelist(f"data/{name}.txt")
+    return [graph]
+
+
+def _load_as() -> Tuple[object, str]:
+    graph = utils.load_snap_edgelist("data/as20000102.txt")
+    return [graph], "graph"
+
+
+def _load_simple_edgelist(fname: str) -> Tuple[object, str]:
+    return [_load_graph_from_space_delimited(f"data/{fname}")], "graph"
+
+
+# 精确匹配数据集注册表。
+_LOADER_REGISTRY: dict[str, Callable[[], Tuple[object, str]]] = {
+    "enzymes": lambda: _load_tu("enzymes"),
+    "proteins": lambda: _load_tu("proteins"),
+    "cox2": lambda: _load_tu("cox2"),
+    "aids": lambda: _load_tu("aids"),
+    "reddit-binary": lambda: _load_tu("reddit-binary"),
+    "imdb-binary": lambda: _load_tu("imdb-binary"),
+    "firstmm_db": lambda: _load_tu("firstmm_db"),
+    "dblp": lambda: (TUDataset(root="/tmp/dblp", name="DBLP_v1"), "graph-truncate"),
+    "coil": lambda: _load_tu("coil", "COIL-DEL"),
+    "ppi": lambda: (PPI(root="/tmp/PPI"), "graph"),
+    "qm9": lambda: (QM9(root="/tmp/QM9"), "graph"),
+    "atlas": lambda: (
+        [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)], "graph"
+    ),
+    "facebook": lambda: (_load_facebook("facebook_combined"), "graph"),
+    "as20000102": _load_as,
+    "diseasome": lambda: _load_simple_edgelist("bio-diseasome.mtx"),
+    "usroads": lambda: _load_simple_edgelist("road-usroads.mtx"),
+    "mn-roads": lambda: _load_simple_edgelist("mn-roads.mtx"),
+    "infect": lambda: _load_simple_edgelist("infect-dublin.edges"),
+    "ppi-pathways": lambda: _ppi_pathways_loader(),
+}
+
+
+def _ppi_pathways_loader() -> Tuple[object, str]:
+    graph = nx.Graph()
+    with open("data/ppi-pathways.csv", "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            graph.add_edge(int(row[0]), int(row[1]))
+    return [graph], "graph"
+
+
+def _make_plant_dataset(size: int) -> list[nx.Graph]:
+    """生成植入模式的合成图集合。"""
+    generator = combined_syn.get_generator([size])
+    pattern = generator.generate(size=10)
+    graphs = []
+    np.random.seed(14853)
+    for _ in range(1000):
+        graph = generator.generate()
+        n_old = len(graph)
+        graph = nx.disjoint_union(graph, pattern)
+        for _ in range(2):
+            u = np.random.randint(0, n_old)
+            v = np.random.randint(n_old, len(graph))
+            graph.add_edge(int(u), int(v))
+        graphs.append(graph)
+    return graphs
 
 
 # 固定名称的数据集集合（不含前缀型动态数据集）。
@@ -150,29 +244,8 @@ def _load_graph_from_space_delimited(path: str) -> nx.Graph:
     return graph
 
 
-def _make_plant_dataset(size: int) -> list[nx.Graph]:
-    """生成植入模式的合成图集合。
-
-    注：这里不做绘图保存，避免把注册中心与可视化侧效应耦合。
-    """
-    generator = combined_syn.get_generator([size])
-    pattern = generator.generate(size=10)
-    graphs = []
-    np.random.seed(14853)
-    for _ in range(1000):
-        graph = generator.generate()
-        n_old = len(graph)
-        graph = nx.disjoint_union(graph, pattern)
-        for _ in range(2):
-            u = np.random.randint(0, n_old)
-            v = np.random.randint(n_old, len(graph))
-            graph.add_edge(int(u), int(v))
-        graphs.append(graph)
-    return graphs
-
-
 def load_dataset_for_stage(name: str, stage: str) -> Tuple[object, str]:
-    """统一加载入口。
+    """统一加载入口（注册表 + 前缀匹配）。
 
     返回值:
     - dataset: 可迭代图集合或 PyG/TU 数据集对象
@@ -180,70 +253,24 @@ def load_dataset_for_stage(name: str, stage: str) -> Tuple[object, str]:
     """
     dataset_name = validate_dataset_name(name, stage)
 
+    # 动态前缀数据集：syn、facebook_combined、roadnet-、plant-
     if dataset_name.startswith("syn"):
         generator = combined_syn.get_generator([10])
         return [generator.generate(size=10) for _ in range(10)], "graph"
 
-    if dataset_name == "enzymes":
-        return TUDataset(root="/tmp/ENZYMES", name="ENZYMES"), "graph"
-    if dataset_name == "proteins":
-        return TUDataset(root="/tmp/PROTEINS", name="PROTEINS"), "graph"
-    if dataset_name == "cox2":
-        return TUDataset(root="/tmp/cox2", name="COX2"), "graph"
-    if dataset_name == "aids":
-        return TUDataset(root="/tmp/AIDS", name="AIDS"), "graph"
-    if dataset_name == "reddit-binary":
-        return TUDataset(root="/tmp/REDDIT-BINARY", name="REDDIT-BINARY"), "graph"
-    if dataset_name == "imdb-binary":
-        return TUDataset(root="/tmp/IMDB-BINARY", name="IMDB-BINARY"), "graph"
-    if dataset_name == "firstmm_db":
-        return TUDataset(root="/tmp/FIRSTMM_DB", name="FIRSTMM_DB"), "graph"
-    if dataset_name == "dblp":
-        return TUDataset(root="/tmp/dblp", name="DBLP_v1"), "graph-truncate"
-    if dataset_name == "coil":
-        return TUDataset(root="/tmp/coil", name="COIL-DEL"), "graph"
-    if dataset_name == "ppi":
-        return PPI(root="/tmp/PPI"), "graph"
-    if dataset_name == "qm9":
-        return QM9(root="/tmp/QM9"), "graph"
-    if dataset_name == "atlas":
-        dataset = [g for g in nx.graph_atlas_g()[1:] if nx.is_connected(g)]
-        return dataset, "graph"
-
-    if dataset_name == "facebook":
-        graph = utils.load_snap_edgelist("data/facebook_combined.txt")
-        return [graph], "graph"
     if dataset_name.startswith("facebook_combined"):
-        graph = utils.load_snap_edgelist(f"data/{dataset_name}.txt")
-        return [graph], "graph"
-
-    if dataset_name == "as20000102":
-        graph = utils.load_snap_edgelist("data/as20000102.txt")
-        return [graph], "graph"
+        return _load_facebook(dataset_name), "graph"
 
     if dataset_name.startswith("roadnet-"):
-        graph = utils.load_snap_edgelist(f"data/{dataset_name}.txt")
-        return [graph], "graph"
-
-    if dataset_name in {"diseasome", "usroads", "mn-roads", "infect"}:
-        fn = {
-            "diseasome": "bio-diseasome.mtx",
-            "usroads": "road-usroads.mtx",
-            "mn-roads": "mn-roads.mtx",
-            "infect": "infect-dublin.edges",
-        }
-        return [_load_graph_from_space_delimited(f"data/{fn[dataset_name]}")], "graph"
-
-    if dataset_name == "ppi-pathways":
-        graph = nx.Graph()
-        with open("data/ppi-pathways.csv", "r", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            for row in reader:
-                graph.add_edge(int(row[0]), int(row[1]))
-        return [graph], "graph"
+        return _load_facebook(dataset_name), "graph"  # 格式同 facebook
 
     if dataset_name.startswith("plant-"):
         size = int(dataset_name.split("-")[-1])
         return _make_plant_dataset(size), "graph"
+
+    # 精确匹配注册表
+    loader = _LOADER_REGISTRY.get(dataset_name)
+    if loader is not None:
+        return loader()
 
     raise ValueError(_format_unknown_dataset_error(name, stage))

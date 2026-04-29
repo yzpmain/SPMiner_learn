@@ -17,7 +17,17 @@ from src.core import combined_syn
 from src.core import dataset_registry
 from src.core import feature_preprocess
 from src.core import utils
+from src.core.sampling.neighborhood import frontier_sample_nodes
 from src.logger import info
+
+__all__ = [
+    "DataSource",
+    "OTFSynDataSource",
+    "OTFSynImbalancedDataSource",
+    "DiskDataSource",
+    "DiskImbalancedDataSource",
+    "load_dataset",
+]
 
 
 def _imbalanced_add_anchor(g, node_anchored):
@@ -156,17 +166,7 @@ class OTFSynDataSource(DataSource):
                         d = 1 if train else 0
                         size = random.randint(self.min_size + offset - d,
                             len(graph.G) - 1 + offset)
-                start_node = random.choice(list(graph.G.nodes))
-                neigh = [start_node]
-                frontier = list(set(graph.G.neighbors(start_node)) - set(neigh))
-                visited = set([start_node])
-                while len(neigh) < size:
-                    new_node = random.choice(list(frontier))
-                    assert new_node not in neigh
-                    neigh.append(new_node)
-                    visited.add(new_node)
-                    frontier += list(graph.G.neighbors(new_node))
-                    frontier = [x for x in frontier if x not in visited]
+                neigh = frontier_sample_nodes(graph.G, size)
                 if self.node_anchored:
                     anchor = neigh[0]
                     for v in graph.G.nodes:

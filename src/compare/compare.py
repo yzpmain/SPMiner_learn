@@ -20,6 +20,8 @@ from src.compare.benchmarking import (
 )
 from src.compare.plotting import plot_results
 
+__all__ = ["parse_args", "main"]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SPMiner vs gSpan 对比脚本")

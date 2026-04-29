@@ -2,22 +2,19 @@
 子图匹配模型需要使用节点锚定选项进行训练（默认）。"""
 
 import argparse
-import os
 import pickle
-import random
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import torch
 
-from src.core import data
-from src.core import models
+from src.core import CoreFacade
 from src.core import utils
 from src.subgraph_matching.config import parse_encoder
-from src.subgraph_matching.test import validation
-from src.subgraph_matching.train import build_model
 from src.logger import RunLogger, info
+
+__all__ = ["gen_alignment_matrix", "main"]
 
 def gen_alignment_matrix(model, query, target, method_type="order"):
     """为给定的查询图和目标图生成子图匹配对齐矩阵。
@@ -57,12 +54,16 @@ def main():
     args = parser.parse_args()
     args.test = True
 
-    if not os.path.exists("plots/"):
-        os.makedirs("plots/")
-    if not os.path.exists("results/"):
-        os.makedirs("results/")
-
     with RunLogger(args):
+        artifact_dir = CoreFacade.stage_artifact_dir(args, "alignment", getattr(args, "dataset", "default"))
+        alignment_path = CoreFacade.choose_output_path(
+            args,
+            "results/alignment.npy",
+            default_cli_path="results/alignment.npy",
+            suggested_default_path=artifact_dir / "alignment.npy",
+        )
+        plot_path = artifact_dir / "alignment.png"
+
         if args.query_path:
             with open(args.query_path, "rb") as f:
                 query = pickle.load(f)
@@ -74,16 +75,27 @@ def main():
         else:
             target = nx.gnp_random_graph(16, 0.25)
 
-        model = build_model(args)
+        model = CoreFacade.build_model(args, for_inference=True, load_weights=True)
         mat = gen_alignment_matrix(model, query, target,
             method_type=args.method_type)
 
-        np.save("results/alignment.npy", mat)
-        info("Alignment matrix saved → results/alignment.npy")
+        np.save(alignment_path, mat)
+        info("Alignment matrix saved → {}".format(alignment_path))
 
         plt.imshow(mat, interpolation="nearest")
-        plt.savefig("plots/alignment.png")
-        info("Alignment matrix plot saved → plots/alignment.png")
+        plt.savefig(plot_path)
+        plt.close()
+        info("Alignment matrix plot saved → {}".format(plot_path))
+
+        CoreFacade.write_manifest(
+            artifact_dir / "manifest.json",
+            args,
+            outputs={
+                "alignment_matrix": str(alignment_path),
+                "alignment_plot": str(plot_path),
+            },
+            task="alignment",
+        )
 
 if __name__ == '__main__':
     main()

@@ -18,11 +18,19 @@ This repository is a two-stage neural subgraph learning project: train a subgrap
 
 ## Entry Points
 
-- [src/subgraph_matching/train.py](src/subgraph_matching/train.py) trains the encoder.
-- [src/subgraph_matching/test.py](src/subgraph_matching/test.py) evaluates the encoder.
-- [src/subgraph_mining/decoder.py](src/subgraph_mining/decoder.py) runs mining.
-- [src/gui/main_window.py](src/gui/main_window.py) launches the GUI.
+- [src/core/config.py](src/core/config.py) provides typed config dataclasses (MatchingConfig, MiningConfig, RuntimeConfig, AugmentConfig).
+- [src/subgraph_matching/train.py](src/subgraph_matching/train.py) trains the encoder (train / train_step / train_loop).
+- [src/subgraph_matching/test.py](src/subgraph_matching/test.py) evaluates the encoder (validation / compute_metrics / plot_pr_curve).
+- [src/subgraph_mining/decoder.py](src/subgraph_mining/decoder.py) runs mining (thin wrapper around PatternGrowthPipeline).
+- [src/subgraph_mining/pipeline.py](src/subgraph_mining/pipeline.py) contains the PatternGrowthPipeline class.
 - [src/analyze/](src/analyze/) contains post-processing and count/analysis scripts.
+
+## Key Modules (Refactored)
+
+- `utils.py` has been split into focused submodules: `device.py`, `hashing.py`, `optimizer.py`, `batch.py`, `io/`, `sampling/`. The original `from src.core import utils` import still works via backward-compatible shims.
+- Dataset loading uses a registry pattern in `dataset_registry.py` instead of if-elif chains.
+- `validation()` and `train()` in `subgraph_matching/` have been decomposed into smaller functions.
+- `pattern_growth()` was extracted into the `PatternGrowthPipeline` class in `pipeline.py`.
 
 ## Environment and Testing
 
@@ -34,7 +42,10 @@ This repository is a two-stage neural subgraph learning project: train a subgrap
 ## Logging and Outputs
 
 - Runtime logs are written through [src/logger.py](src/logger.py) into timestamped folders under [runlogs/](runlogs/).
-- If a task creates or updates artifacts, prefer writing to an existing output directory and document the path in the task result.
+- Generated artifacts use unified output policy flags: `--output_root`, `--output_strategy`, and `--output_tag`.
+- Prefer `--output_strategy version` (default) to avoid overwriting old results.
+- Primary outputs should land under `results/<task>/<dataset>/<run_name>/` and include a `manifest.json` when available.
+- Avoid introducing new hard-coded output paths like `results/*.json` or `plots/*.png` in scripts; route through shared artifact helpers instead.
 
 ## When Extending the Codebase
 

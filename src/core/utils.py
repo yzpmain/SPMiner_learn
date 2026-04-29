@@ -17,6 +17,24 @@ from tqdm import tqdm
 from src.core import feature_preprocess
 from src.logger import info, warning
 
+__all__ = [
+    "sample_neigh",
+    "vec_hash",
+    "wl_hash",
+    "gen_baseline_queries_rand_esu",
+    "enumerate_subgraph",
+    "extend_subgraph",
+    "gen_baseline_queries_mfinder",
+    "load_snap_edgelist",
+    "get_device",
+    "set_use_gpu",
+    "parse_optimizer",
+    "build_optimizer",
+    "batch_nx_graphs",
+    "parse_gspan_output",
+    "load_spminer_pickle",
+]
+
 def sample_neigh(graphs, size, max_attempts=100):
     """在图集合中按图大小加权采样一个连通邻域。
 
@@ -372,3 +390,20 @@ def load_spminer_pickle(file_path: Path) -> List[nx.Graph]:
     if isinstance(obj, list):
         return obj
     raise ValueError(f"Unsupported SPMiner result format in {file_path}")
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible shims — re-export from new submodules.
+# All existing "from src.core import utils; utils.<fn>(...)" imports
+# continue to work without changes.
+# ---------------------------------------------------------------------------
+from src.core.device import get_device, set_use_gpu  # noqa: E402, F401
+from src.core.hashing import vec_hash, wl_hash  # noqa: E402, F401
+from src.core.optimizer import parse_optimizer, build_optimizer  # noqa: E402, F401
+from src.core.batch import batch_nx_graphs  # noqa: E402, F401
+from src.core.sampling.neighborhood import sample_neigh  # noqa: E402, F401
+from src.core.sampling.enumeration import enumerate_subgraph, extend_subgraph  # noqa: E402, F401
+from src.core.sampling.baseline_queries import gen_baseline_queries_rand_esu, gen_baseline_queries_mfinder  # noqa: E402, F401
+from src.core.io.gspan_parser import parse_gspan_output  # noqa: E402, F401
+from src.core.io.pickle_io import load_spminer_pickle  # noqa: E402, F401
+from src.core.io.graph_io import load_snap_edgelist  # noqa: E402, F401

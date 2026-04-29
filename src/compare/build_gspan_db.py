@@ -3,6 +3,8 @@ import argparse
 
 from src.compare.benchmarking import build_gspan_db_from_edge_list
 
+__all__ = ["parse_args", "main"]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build gSpan database from edge list")

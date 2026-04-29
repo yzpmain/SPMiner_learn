@@ -6,6 +6,8 @@ import pandas as pd
 from src.compare.analysis import evaluate_pair, collect_files_from_summary
 from src.core.utils import parse_gspan_output, load_spminer_pickle
 
+__all__ = ["main"]
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate isomorphism-based accuracy between SPMiner and gSpan")

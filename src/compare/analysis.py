@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 import re
 from pathlib import Path
@@ -61,9 +60,7 @@ def match_isomorphic_patterns(spminer_graphs: List[nx.Graph], gspan_graphs: List
     for i in range(len(spminer_graphs)):
         left = ("s", i)
         if left in matching:
-            right = matching[left]
-            if isinstance(right, tuple) and len(right) == 2:
-                pairs.append((i, int(right[1])))
+            pairs.append((i, int(matching[left][1])))
     return pairs
 
 

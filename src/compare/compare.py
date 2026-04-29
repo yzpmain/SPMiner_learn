@@ -114,129 +114,113 @@ def _file_contains_memory_error(path: Path | str) -> bool:
         return False
 
 
-def main() -> None:
-    args = parse_args()
-    repo_root = resolve_path(Path.cwd(), args.repo_root)
-    out_dir = resolve_path(repo_root, args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def _save_intermediate(records: list[dict], args: argparse.Namespace, out_dir: Path) -> None:
+    """增量保存中间结果到 CSV。每次调用覆盖写入，确保崩溃时已有成果不丢。"""
+    if not records:
+        return
+    df = pd.DataFrame(records)
+    df = add_runtime_metrics(df)
+    for col in ["gspan_time", "spminer_time", "gspan_mem", "spminer_mem"]:
+        if col in df.columns:
+            df[col] = df[col].map(_safe_float)
+    csv_path = out_dir / f"experiment_result_{args.dataset}.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"[中间结果已保存] {csv_path} ({len(records)} 条记录)")
 
-    size_contexts: list[tuple[int | None, Path | None]] = []
-    if args.graph_sizes:
-        edge_list_path = resolve_path(repo_root, args.edge_list)
-        data_dir = repo_root / "src" / "compare" / "data"
-        for graph_size in args.graph_sizes:
-            gspan_db = data_dir / f"{args.dataset}_gspan_{graph_size}.txt"
+
+def _build_gspan_contexts(args: argparse.Namespace, repo_root: Path) -> list[tuple[int | None, Path | None]]:
+    """构建 gSpan DB 上下文列表。单个规模构建失败则跳过，不中断整体流程。"""
+    contexts: list[tuple[int | None, Path | None]] = []
+    if not args.graph_sizes:
+        gspan_db = resolve_path(repo_root, args.gspan_db_file) if args.gspan_db_file else None
+        contexts.append((None, gspan_db))
+        return contexts
+
+    edge_list_path = resolve_path(repo_root, args.edge_list)
+    data_dir = repo_root / "src" / "compare" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    for graph_size in args.graph_sizes:
+        gspan_db = data_dir / f"{args.dataset}_gspan_{graph_size}.txt"
+        try:
             n_nodes, n_edges = build_gspan_db_from_edge_list(edge_list_path, gspan_db, graph_size)
             print(f"[multi] 生成规模图: {gspan_db} (nodes={n_nodes}, edges={n_edges})")
-            size_contexts.append((graph_size, gspan_db))
-    else:
-        gspan_db = resolve_path(repo_root, args.gspan_db_file) if args.gspan_db_file else None
-        size_contexts.append((None, gspan_db))
+            contexts.append((graph_size, gspan_db))
+        except Exception as exc:
+            print(f"[multi] 跳过规模 {graph_size}（构建失败: {exc}）")
+    return contexts
 
-    records: list[dict] = []
-    run_id = 0
-    for graph_size, gspan_db in size_contexts:
-        local_args = argparse.Namespace(**vars(args))
-        if gspan_db:
-            local_args.gspan_db_file = str(gspan_db)
 
-        benchmark_dataset = args.dataset
-        if args.fair_shared_input:
-            benchmark_dataset = prepare_spminer_dataset_from_gspan_db(local_args, repo_root)
-            print(f"[fair] 使用共享输入运行：gSpan + SPMiner 均基于 {local_args.gspan_db_file}")
+def _run_one_pair(
+    local_args: argparse.Namespace,
+    repo_root: Path,
+    paths: dict[str, Path],
+    k: int,
+    benchmark_dataset: str,
+) -> dict:
+    """执行一组 (size, k) 对比。gSpan 或 SPMiner 各自独立容错。"""
+    record: dict = {}
 
-        for k in args.ks:
-            print(f"===== 正在测试 {size_tag(graph_size)}, k={k} =====")
-            paths = case_output_paths(out_dir, args.dataset, graph_size, k)
-            record = {
-                "run_id": run_id,
-                "dataset": args.dataset,
-                "frequency_dataset": benchmark_dataset,
-                "graph_size": graph_size if graph_size is not None else np.nan,
-                "k": k,
-                "gspan_result_file": str(paths["gspan_out"]),
-                "spminer_result_file": str(paths["spminer_out"]),
-                "spminer_log_file": str(paths["spminer_log"]),
-            }
+    try:
+        g_time, g_mem = run_gspan(local_args, repo_root, paths["gspan_out"], k)
+        g_kept = trim_gspan_top_k(paths["gspan_out"], local_args.top_k_patterns)
+        record.update({
+            "gspan_time": g_time,
+            "gspan_mem": g_mem,
+            "gspan_status": "ok",
+            "gspan_topk_kept": g_kept,
+        })
+        print(f"gSpan 完成：时间={g_time:.2f}s, 内存={g_mem:.2f}MB, top-{local_args.top_k_patterns}保留={g_kept}")
+    except Exception as exc:
+        mem_err = _file_contains_memory_error(paths.get("gspan_out", ""))
+        if mem_err:
+            record.update({
+                "gspan_time": np.nan, "gspan_mem": np.nan,
+                "gspan_status": "oom", "gspan_topk_kept": 0,
+            })
+            print(f"gSpan OOM: {paths.get('gspan_out')}")
+        else:
+            record.update({
+                "gspan_time": np.nan, "gspan_mem": np.nan,
+                "gspan_status": str(exc), "gspan_topk_kept": 0,
+            })
+            print(f"gSpan 失败：{exc}")
 
-            try:
-                g_time, g_mem = run_gspan(local_args, repo_root, paths["gspan_out"], k)
-                g_kept = trim_gspan_top_k(paths["gspan_out"], local_args.top_k_patterns)
-                record.update({
-                    "gspan_time": g_time,
-                    "gspan_mem": g_mem,
-                    "gspan_status": "ok",
-                    "gspan_topk_kept": g_kept,
-                })
-                print(f"gSpan 完成：时间={g_time:.2f}s, 内存={g_mem:.2f}MB, top-{local_args.top_k_patterns}保留={g_kept}")
-            except Exception as exc:
-                # 检测是否为子进程内存错误（通过输出文件内容判断），如果是则标记为无法计算
-                mem_err = _file_contains_memory_error(paths["gspan_out"]) if paths.get("gspan_out") else False
-                if mem_err:
-                    record.update({
-                        "gspan_time": np.nan,
-                        "gspan_mem": np.nan,
-                        "gspan_status": "oom",
-                        "gspan_topk_kept": 0,
-                    })
-                    print(f"gSpan OOM（内存不足），已标记为 oom: {paths.get('gspan_out')}")
-                else:
-                    record.update({
-                        "gspan_time": np.nan,
-                        "gspan_mem": np.nan,
-                        "gspan_status": str(exc),
-                        "gspan_topk_kept": 0,
-                    })
-                    print(f"gSpan 失败：{exc}")
+    try:
+        s_time, s_mem = run_spminer(
+            local_args, repo_root, paths["spminer_out"], paths["spminer_log"],
+            k, benchmark_dataset,
+        )
+        s_kept = trim_spminer_top_k(paths["spminer_out"], local_args.top_k_patterns)
+        record.update({
+            "spminer_time": s_time, "spminer_mem": s_mem,
+            "spminer_status": "ok", "spminer_topk_kept": s_kept,
+        })
+        print(f"SPMiner 完成：时间={s_time:.2f}s, 内存={s_mem:.2f}MB, top-{local_args.top_k_patterns}保留={s_kept}")
+    except Exception as exc:
+        mem_err = _file_contains_memory_error(paths.get("spminer_log", ""))
+        if mem_err:
+            record.update({
+                "spminer_time": np.nan, "spminer_mem": np.nan,
+                "spminer_status": "oom", "spminer_topk_kept": 0,
+            })
+            print(f"SPMiner OOM: {paths.get('spminer_log')}")
+        else:
+            record.update({
+                "spminer_time": np.nan, "spminer_mem": np.nan,
+                "spminer_status": str(exc), "spminer_topk_kept": 0,
+            })
+            print(f"SPMiner 失败：{exc}")
 
-            try:
-                s_time, s_mem = run_spminer(
-                    local_args,
-                    repo_root,
-                    paths["spminer_out"],
-                    paths["spminer_log"],
-                    k,
-                    benchmark_dataset,
-                )
-                s_kept = trim_spminer_top_k(paths["spminer_out"], local_args.top_k_patterns)
-                record.update({
-                    "spminer_time": s_time,
-                    "spminer_mem": s_mem,
-                    "spminer_status": "ok",
-                    "spminer_topk_kept": s_kept,
-                })
-                print(f"SPMiner 完成：时间={s_time:.2f}s, 内存={s_mem:.2f}MB, top-{local_args.top_k_patterns}保留={s_kept}")
-            except Exception as exc:
-                mem_err = _file_contains_memory_error(paths.get("spminer_log"))
-                if mem_err:
-                    record.update({
-                        "spminer_time": np.nan,
-                        "spminer_mem": np.nan,
-                        "spminer_status": "oom",
-                        "spminer_topk_kept": 0,
-                    })
-                    print(f"SPMiner OOM（内存不足），已标记为 oom: {paths.get('spminer_log')}")
-                else:
-                    record.update({
-                        "spminer_time": np.nan,
-                        "spminer_mem": np.nan,
-                        "spminer_status": str(exc),
-                        "spminer_topk_kept": 0,
-                    })
-                    print(f"SPMiner 失败：{exc}")
+    return record
 
-            records.append(record)
-            run_id += 1
+
+def _run_final_analysis(records: list[dict], args: argparse.Namespace, out_dir: Path) -> None:
+    """对所有记录做最终分析：准确率表、汇总 CSV、绘图。"""
+    if not records:
+        print("无有效记录，跳过最终分析")
+        return
 
     df = pd.DataFrame(records)
-    if df.empty:
-        raise RuntimeError("No benchmark records were generated")
-
-    df = add_runtime_metrics(df)
-    df["gspan_time"] = df["gspan_time"].map(_safe_float)
-    df["spminer_time"] = df["spminer_time"].map(_safe_float)
-    df["gspan_mem"] = df["gspan_mem"].map(_safe_float)
-    df["spminer_mem"] = df["spminer_mem"].map(_safe_float)
 
     accuracy_df = build_accuracy_table(
         df,
@@ -247,12 +231,9 @@ def main() -> None:
         frequency_workers=args.frequency_workers,
     )
     df = df.merge(accuracy_df, on="run_id", how="left", suffixes=("", "_analysis"))
-    drop_analysis_cols = [
-        col for col in ["graph_size_analysis", "k_analysis", "spminer_result_file_analysis", "gspan_result_file_analysis"]
-        if col in df.columns
-    ]
-    if drop_analysis_cols:
-        df = df.drop(columns=drop_analysis_cols)
+    drop_cols = [c for c in df.columns if c.endswith("_analysis")]
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
 
     csv_path = out_dir / f"experiment_result_{args.dataset}.csv"
     df.to_csv(csv_path, index=False)
@@ -270,6 +251,59 @@ def main() -> None:
 
     print(f"实验结果已保存：{csv_path}")
     print(f"对比图已生成到目录：{out_dir}")
+
+
+def main() -> None:
+    args = parse_args()
+    repo_root = resolve_path(Path.cwd(), args.repo_root)
+    out_dir = resolve_path(repo_root, args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    size_contexts = _build_gspan_contexts(args, repo_root)
+    if not size_contexts:
+        raise RuntimeError("无可用的图规模上下文（所有 gSpan DB 构建均失败）")
+
+    records: list[dict] = []
+    run_id = 0
+    for graph_size, gspan_db in size_contexts:
+        local_args = argparse.Namespace(**vars(args))
+        if gspan_db:
+            local_args.gspan_db_file = str(gspan_db)
+
+        benchmark_dataset = args.dataset
+        if args.fair_shared_input:
+            try:
+                benchmark_dataset = prepare_spminer_dataset_from_gspan_db(local_args, repo_root)
+                print(f"[fair] 使用共享输入运行：gSpan + SPMiner 均基于 {local_args.gspan_db_file}")
+            except Exception as exc:
+                print(f"[fair] 共享输入准备失败（跳过该规模 {size_tag(graph_size)}: {exc}）")
+                continue
+
+        for k in args.ks:
+            print(f"===== 正在测试 {size_tag(graph_size)}, k={k} =====")
+            paths = case_output_paths(out_dir, args.dataset, graph_size, k)
+
+            pair_record = _run_one_pair(local_args, repo_root, paths, k, benchmark_dataset)
+            record = {
+                "run_id": run_id,
+                "dataset": args.dataset,
+                "frequency_dataset": benchmark_dataset,
+                "graph_size": graph_size if graph_size is not None else np.nan,
+                "k": k,
+                "gspan_result_file": str(paths["gspan_out"]),
+                "spminer_result_file": str(paths["spminer_out"]),
+                "spminer_log_file": str(paths["spminer_log"]),
+            }
+            record.update(pair_record)
+
+            records.append(record)
+            run_id += 1
+
+            # 每组 (size, k) 完成后立即保存中间结果
+            _save_intermediate(records, args, out_dir)
+
+    # 最终分析
+    _run_final_analysis(records, args, out_dir)
 
 
 if __name__ == "__main__":

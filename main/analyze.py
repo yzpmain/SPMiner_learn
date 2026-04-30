@@ -11,6 +11,14 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+# 中文字体
+for font in ["Microsoft YaHei", "SimHei", "Arial Unicode MS"]:
+    try:
+        plt.rcParams["font.sans-serif"] = [font, "DejaVu Sans"]
+        plt.rcParams["axes.unicode_minus"] = False
+        break
+    except Exception:
+        continue
 import numpy as np
 
 from main.config import EXPERIMENT_DATASETS, OUT_DIR, PLOT_DIR, DATA_ROOT

@@ -253,10 +253,26 @@ def _save_results(out_dir: Path, patterns: list, counts: list, stats: dict):
     info("结果保存至 {}".format(out_dir))
 
 
-def _save_plots(plot_dir: Path, patterns: list, counts: list, stats: dict):
+def _setup_cjk_font():
+    """配置 matplotlib 中文字体支持。"""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    # Windows 常见中文字体
+    for font in ["Microsoft YaHei", "SimHei", "Arial Unicode MS"]:
+        try:
+            plt.rcParams["font.sans-serif"] = [font, "DejaVu Sans"]
+            plt.rcParams["axes.unicode_minus"] = False
+            # 验证可用
+            from matplotlib.font_manager import findfont, FontProperties
+            findfont(FontProperties(family=font))
+            return plt
+        except Exception:
+            continue
+    return plt
+
+def _save_plots(plot_dir: Path, patterns: list, counts: list, stats: dict):
+    plt = _setup_cjk_font()
 
     # 模式尺寸分布
     sizes = [len(g) for g in patterns]

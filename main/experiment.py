@@ -25,6 +25,7 @@ from src.logger import info, section
 from main.config import EXPERIMENT_DATASETS, MINE_CONFIG, DRY_RUN_CONFIG
 from main.sbm_generator import ensure_sbm_dataset
 from main.download_as733 import ensure_as733
+from main.er_baseline import run_er_baseline
 
 __all__ = ["run_dataset"]
 
@@ -171,12 +172,14 @@ def run_dataset(
     max_size: int | None = None,
     count_method: str = "bin",
     count_sample_size: int = 100,
+    skip_baseline: bool = True,
 ) -> dict:
     """单数据集实验入口。
 
     参数:
         count_method: 计数模式 bin/freq/sample
         count_sample_size: sample 模式下的目标图采样数
+        skip_baseline: 跳过 ER 基线挖掘
 
     返回:
         dict: 实验统计结果
@@ -241,13 +244,46 @@ def run_dataset(
     count_time = time.time() - t0
     info("计数完成: 耗时 {:.1f}s".format(count_time))
 
-    # 6. 统计
+    # 6. 全局频率排序 → 按真实频率截断取 top-k
+    ranked = sorted(zip(patterns, counts), key=lambda x: x[1], reverse=True)
+    top_k = getattr(args, "global_top_k", 30)
+    ranked = ranked[:top_k]
+    patterns = [p for p, _ in ranked]
+    counts = [c for _, c in ranked]
+
+    # 每个模式附元数据（搜索排名/频次 + 真实排名/频次）
+    pattern_meta = []
+    for rank, (pat, cnt) in enumerate(zip(patterns, counts), start=1):
+        pattern_meta.append({
+            "rank": rank,
+            "node_count": len(pat),
+            "edge_count": pat.number_of_edges(),
+            "frequency": cnt,
+            "search_rank": pat.graph.get("search_rank", -1),
+            "search_freq": pat.graph.get("search_freq", -1),
+        })
+
+    # 7. 统计
     stats = _compute_stats(patterns, counts, mining_time + count_time)
     stats["dataset"] = dataset_name
     stats["label"] = EXPERIMENT_DATASETS[dataset_name]["label"]
 
-    _save_results(out_dir, patterns, counts, stats)
+    _save_results(out_dir, patterns, counts, stats, pattern_meta)
     _save_plots(plot_dir, patterns, counts, stats)
+
+    # 8. ER 基线对比
+    if not skip_baseline:
+        info("运行 ER 基线对比 ...")
+        run_er_baseline(
+            dataset_name=dataset_name,
+            model=model,
+            args=args,
+            real_graphs=targets if count_method != "sample" else _to_nx_list(dataset),
+            out_dir=out_dir,
+            dry_run=dry_run,
+            count_method=count_method,
+            count_sample_size=count_sample_size,
+        )
 
     return stats
 
@@ -255,11 +291,15 @@ def run_dataset(
 # ---------------------------------------------------------------------------
 # 保存
 # ---------------------------------------------------------------------------
-def _save_results(out_dir: Path, patterns: list, counts: list, stats: dict):
+def _save_results(out_dir: Path, patterns: list, counts: list, stats: dict,
+                  pattern_meta: list | None = None):
     with open(out_dir / "patterns.p", "wb") as f:
         pickle.dump(patterns, f)
     with open(out_dir / "counts.json", "w") as f:
         json.dump(([len(g) for g in patterns], counts, []), f)
+    if pattern_meta:
+        with open(out_dir / "pattern_meta.json", "w") as f:
+            json.dump(pattern_meta, f, indent=2, ensure_ascii=False)
     with open(out_dir / "summary.json", "w") as f:
         json.dump(stats, f, indent=2, default=str)
     info("结果保存至 {}".format(out_dir))

@@ -30,8 +30,8 @@ def parse_decoder(parser):
     dec_parser.add_argument('--n_neighborhoods', type=int)
     dec_parser.add_argument('--n_trials', type=int,
                         help='搜索试验次数')
-    dec_parser.add_argument('--out_batch_size', type=int,
-                        help='每种图大小输出的模体数量')
+    dec_parser.add_argument('--global_top_k', type=int,
+                        help='全局输出的频繁子图数量（所有尺寸统排）')
     dec_parser.add_argument('--frontier_top_k', type=int,
                         help='每步仅保留度数最高的前 K 个 frontier 候选，0 表示不剪枝')
     dec_parser.add_argument('--analyze', action="store_true")
@@ -55,7 +55,7 @@ def parse_decoder(parser):
                         min_neighborhood_size=20,
                         max_neighborhood_size=29,
                         search_strategy="greedy",
-                        out_batch_size=10,
+                        global_top_k=30,
                         frontier_top_k=5,
                         node_anchored=False)
 

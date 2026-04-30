@@ -103,7 +103,7 @@ class MiningConfig:
     max_neighborhood_size: int = 29
     n_neighborhoods: int = 10000
     n_trials: int = 1000
-    out_batch_size: int = 10
+    global_top_k: int = 30
     frontier_top_k: int = 5
     decode_thresh: float = 0.5
     search_strategy: str = "greedy"
@@ -127,7 +127,7 @@ class MiningConfig:
             max_neighborhood_size=getattr(ns, "max_neighborhood_size", 29),
             n_neighborhoods=getattr(ns, "n_neighborhoods", 10000),
             n_trials=getattr(ns, "n_trials", 1000),
-            out_batch_size=getattr(ns, "out_batch_size", 10),
+            global_top_k=getattr(ns, "global_top_k", 30),
             frontier_top_k=getattr(ns, "frontier_top_k", 5),
             decode_thresh=getattr(ns, "decode_thresh", 0.5),
             search_strategy=getattr(ns, "search_strategy", "greedy"),

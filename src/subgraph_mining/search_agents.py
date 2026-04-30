@@ -29,7 +29,7 @@ class SearchAgent:
     """
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, model_type="order",
-        out_batch_size=20, frontier_top_k=0, analysis_out_path=None,
+        global_top_k=30, frontier_top_k=0, analysis_out_path=None,
         analysis_plot_path=None):
         """ 通过在嵌入空间中游走进行子图模式搜索。
 
@@ -43,8 +43,7 @@ class SearchAgent:
                 节点锚定搜索过程必须使用节点锚定模型（在子图匹配 config.py 中指定）。
             analyze: 是否启用分析可视化。
             model_type: 子图匹配模型类型（须与 model 参数保持一致）。
-            out_batch_size: 挖掘算法为每种尺寸输出的频繁子图数量。
-                这些被预测为数据集中出现频率最高的 out_batch_size 个子图。
+            global_top_k: 全局输出的频繁子图数量（所有尺寸合并后统一排序取前 K）。
             frontier_top_k: 每一步保留的 frontier 候选上限。0 表示不剪枝。
         """
         self.min_pattern_size = min_pattern_size
@@ -55,7 +54,7 @@ class SearchAgent:
         self.node_anchored = node_anchored
         self.analyze = analyze
         self.model_type = model_type
-        self.out_batch_size = out_batch_size
+        self.global_top_k = global_top_k
         self.frontier_top_k = frontier_top_k
         self.analysis_out_path = analysis_out_path or "results/analyze.p"
         self.analysis_plot_path = analysis_plot_path or "plots/analyze.png"
@@ -113,7 +112,7 @@ class SearchAgent:
 class MCTSSearchAgent(SearchAgent):
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, model_type="order",
-        out_batch_size=20, c_uct=0.7, frontier_top_k=0,
+        global_top_k=30, c_uct=0.7, frontier_top_k=0,
         analysis_out_path=None, analysis_plot_path=None):
         """ 子图模式搜索的 MCTS 实现。
         使用 MCTS 策略搜索最常见的模式。
@@ -123,7 +122,7 @@ class MCTSSearchAgent(SearchAgent):
         """
         super().__init__(min_pattern_size, max_pattern_size, model, dataset,
             embs, node_anchored=node_anchored, analyze=analyze,
-            model_type=model_type, out_batch_size=out_batch_size,
+            model_type=model_type, global_top_k=global_top_k,
             frontier_top_k=frontier_top_k,
             analysis_out_path=analysis_out_path,
             analysis_plot_path=analysis_plot_path)
@@ -249,25 +248,42 @@ class MCTSSearchAgent(SearchAgent):
         self.max_size += 1
 
     def finish_search(self):
-        """按访问统计选出每个尺寸的高频候选模式。"""
+        """按访问统计全局排序选出高频候选模式。"""
+        # 收集各尺寸计数的 WL 哈希值
         counts = defaultdict(lambda: defaultdict(int))
         for _, v in self.visit_counts.items():
             for s2, count in v.items():
                 counts[len(random.choice(self.wl_hash_to_graphs[s2]))][s2] += count
 
-        cand_patterns_uniq = []
+        # 所有尺寸混合后按频次全局排序
+        all_candidates = []
         for pattern_size in range(self.min_pattern_size, self.max_pattern_size+1):
-            for wl_hash, count in sorted(counts[pattern_size].items(), key=lambda
-                x: x[1], reverse=True)[:self.out_batch_size]:
-                cand_patterns_uniq.append(random.choice(
-                    self.wl_hash_to_graphs[wl_hash]))
-                info("Outputting {} motifs of size {}".format(count, pattern_size))
+            for wl_hash, count in counts[pattern_size].items():
+                graph = random.choice(self.wl_hash_to_graphs[wl_hash])
+                all_candidates.append((wl_hash, count, graph, pattern_size))
+
+        cand_patterns_uniq = []
+        seen = set()
+        pool_size = self.global_top_k * 2
+        search_rank = 0
+        for wl_hash, count, graph, size in sorted(all_candidates,
+                key=lambda x: x[1], reverse=True):
+            if wl_hash in seen:
+                continue
+            if len(cand_patterns_uniq) >= pool_size:
+                break
+            search_rank += 1
+            seen.add(wl_hash)
+            graph.graph["search_freq"] = count
+            graph.graph["search_rank"] = search_rank
+            cand_patterns_uniq.append(graph)
+            info("候选模式: 尺寸={}, 搜索频次={}, 搜索排名={}".format(size, count, search_rank))
         return cand_patterns_uniq
 
 class GreedySearchAgent(SearchAgent):
     def __init__(self, min_pattern_size, max_pattern_size, model, dataset,
         embs, node_anchored=False, analyze=False, rank_method="counts",
-        model_type="order", out_batch_size=20, n_beams=1,
+        model_type="order", global_top_k=30, n_beams=1,
         frontier_top_k=0, max_steps=1000, analysis_out_path=None,
         analysis_plot_path=None):
         """子图模式搜索的贪心实现。
@@ -283,7 +299,7 @@ class GreedySearchAgent(SearchAgent):
         """
         super().__init__(min_pattern_size, max_pattern_size, model, dataset,
             embs, node_anchored=node_anchored, analyze=analyze,
-            model_type=model_type, out_batch_size=out_batch_size,
+            model_type=model_type, global_top_k=global_top_k,
             frontier_top_k=frontier_top_k,
             analysis_out_path=analysis_out_path,
             analysis_plot_path=analysis_plot_path)
@@ -389,7 +405,7 @@ class GreedySearchAgent(SearchAgent):
         self.analyze_embs.append(analyze_embs_cur)
 
     def finish_search(self):
-        """根据 rank_method 汇总并去重输出模式。"""
+        """汇总并全局排序去重输出模式（所有尺寸统排取前 K）。"""
         if self.analyze:
             info("Analysis info saved → {}".format(self.analysis_out_path))
             with open(self.analysis_out_path, "wb") as f:
@@ -405,34 +421,41 @@ class GreedySearchAgent(SearchAgent):
             plt.savefig(self.analysis_plot_path)
             plt.close()
 
-        cand_patterns_uniq = []
+        # 收集所有尺寸候选 → 全局排序 → 取 top-k
+        all_candidates = []  # (wl_hash, score_or_count, graph, size)
         for pattern_size in range(self.min_pattern_size, self.max_pattern_size+1):
-            if not self.counts[pattern_size]:
-                continue
             if self.rank_method == "hybrid":
-                cur_rank_method = "margin" if len(max(
-                    self.counts[pattern_size].values(), key=len)) < 3 else "counts"
+                if self.counts[pattern_size]:
+                    max_len = len(max(self.counts[pattern_size].values(), key=len))
+                else:
+                    max_len = 0
+                cur_rank = "margin" if max_len < 3 else "counts"
             else:
-                cur_rank_method = self.rank_method
+                cur_rank = self.rank_method
 
-            if cur_rank_method == "margin":
-                wl_hashes = set()
-                cands = self.cand_patterns[pattern_size]
-                cand_patterns_uniq_size = []
-                for pattern in sorted(cands, key=lambda x: x[0]):
-                    wl_hash = utils.wl_hash(pattern[1],
-                        node_anchored=self.node_anchored)
-                    if wl_hash not in wl_hashes:
-                        wl_hashes.add(wl_hash)
-                        cand_patterns_uniq_size.append(pattern[1])
-                        if len(cand_patterns_uniq_size) >= self.out_batch_size:
-                            cand_patterns_uniq += cand_patterns_uniq_size
-                            break
-            elif cur_rank_method == "counts":
-                for _, neighs in list(sorted(self.counts[pattern_size].items(),
-                    key=lambda x: len(x[1]), reverse=True))[:self.out_batch_size]:
-                    cand_patterns_uniq.append(random.choice(neighs))
-            else:
-                warning("Unrecognized rank method: {}".format(
-                    cur_rank_method))
+            if cur_rank == "margin":
+                for score, graph in self.cand_patterns.get(pattern_size, []):
+                    wl_hash = utils.wl_hash(graph, node_anchored=self.node_anchored)
+                    all_candidates.append((wl_hash, -score, graph, pattern_size))
+            elif cur_rank == "counts":
+                for wl_hash, neighs in self.counts[pattern_size].items():
+                    all_candidates.append((wl_hash, len(neighs), neighs[0], pattern_size))
+
+        # 按频次/分数降序，同构去重，取大池供后续真实频率筛选
+        seen = set()
+        cand_patterns_uniq = []
+        pool_size = self.global_top_k * 2
+        search_rank = 0
+        for wl_hash, score, graph, size in sorted(all_candidates,
+                key=lambda x: x[1], reverse=True):
+            if wl_hash in seen:
+                continue
+            if len(cand_patterns_uniq) >= pool_size:
+                break
+            search_rank += 1
+            seen.add(wl_hash)
+            graph.graph["search_freq"] = score
+            graph.graph["search_rank"] = search_rank
+            cand_patterns_uniq.append(graph)
+            info("候选模式: 尺寸={}, 搜索频次/分数={}, 搜索排名={}".format(size, score, search_rank))
         return cand_patterns_uniq

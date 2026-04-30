@@ -34,6 +34,8 @@ def main():
                         default="bin", help="计数方法 (默认 bin)")
     parser.add_argument("--count-sample-size", type=int, default=100,
                         help="sample 模式采样目标图数 (默认 100)")
+    parser.add_argument("--skip-baseline", action="store_true",
+                        help="跳过 ER 随机图基线对比")
     args = parser.parse_args()
 
     # 构造覆盖参数
@@ -62,6 +64,7 @@ def main():
                 max_size=args.max_size,
                 count_method=args.count_method,
                 count_sample_size=args.count_sample_size,
+                skip_baseline=args.skip_baseline,
             )
             all_results[name] = result
 

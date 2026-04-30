@@ -33,7 +33,7 @@ MINE_CONFIG = {
     "max_pattern_size": 10,
     "n_neighborhoods": 2000,
     "n_trials": 500,
-    "out_batch_size": 10,
+    "global_top_k": 30,
     "node_anchored": True,
     "batch_size": 1000,
     "sample_method": "tree",

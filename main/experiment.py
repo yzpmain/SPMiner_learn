@@ -169,8 +169,14 @@ def run_dataset(
     dry_run: bool = False,
     min_size: int | None = None,
     max_size: int | None = None,
+    count_method: str = "bin",
+    count_sample_size: int = 100,
 ) -> dict:
     """单数据集实验入口。
+
+    参数:
+        count_method: 计数模式 bin/freq/sample
+        count_sample_size: sample 模式下的目标图采样数
 
     返回:
         dict: 实验统计结果
@@ -216,13 +222,19 @@ def run_dataset(
         return stats
 
     # 5. 计数
-    info("计数模式频率 ...")
     targets = _to_nx_list(dataset)
+    info("计数模式频率 (method={}) ...".format(count_method))
+    if count_method == "sample" and len(targets) > count_sample_size:
+        import random
+        rng = random.Random(42)
+        sampled = rng.sample(targets, count_sample_size)
+        info("  采样 {}/{} 个目标图".format(count_sample_size, len(targets)))
+        targets = sampled
     t0 = time.time()
     counts = count_graphlets(
         patterns, targets,
         n_workers=args.n_workers,
-        method="bin",
+        method=count_method if count_method != "sample" else "bin",
         node_anchored=args.node_anchored,
         progress_every=0,
     )

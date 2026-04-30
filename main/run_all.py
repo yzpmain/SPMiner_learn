@@ -30,6 +30,10 @@ def main():
                         help="搜索试验次数 (覆盖默认)")
     parser.add_argument("--n-neighborhoods", type=int, default=None,
                         help="邻域采样数量 (覆盖默认)")
+    parser.add_argument("--count-method", choices=["bin", "freq", "sample"],
+                        default="bin", help="计数方法 (默认 bin)")
+    parser.add_argument("--count-sample-size", type=int, default=100,
+                        help="sample 模式采样目标图数 (默认 100)")
     args = parser.parse_args()
 
     # 构造覆盖参数
@@ -56,6 +60,8 @@ def main():
                 dry_run=args.dry_run,
                 min_size=args.min_size,
                 max_size=args.max_size,
+                count_method=args.count_method,
+                count_sample_size=args.count_sample_size,
             )
             all_results[name] = result
 

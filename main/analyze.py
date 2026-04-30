@@ -1,211 +1,183 @@
-"""实验汇总分析与可视化。
+"""实验分析与报告生成。
 
-读取 expdata/outputs/<dataset>/summary.json 生成汇总表和图表。
+按数据集生成独立分析报告 (Markdown + 图表)，含基线对比。
 """
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-# 中文字体
 for font in ["Microsoft YaHei", "SimHei", "Arial Unicode MS"]:
     try:
-        plt.rcParams["font.sans-serif"] = [font, "DejaVu Sans"]
-        plt.rcParams["axes.unicode_minus"] = False
+        matplotlib.rcParams["font.sans-serif"] = [font, "DejaVu Sans"]
+        matplotlib.rcParams["axes.unicode_minus"] = False
         break
     except Exception:
         continue
+import matplotlib.pyplot as plt
 import numpy as np
 
-from main.config import EXPERIMENT_DATASETS, OUT_DIR, PLOT_DIR, DATA_ROOT
+from main.config import EXPERIMENT_DATASETS, OUT_DIR, PLOT_DIR
 
-__all__ = [
-    "build_summary_table",
-    "plot_size_distribution",
-    "plot_top_patterns",
-    "plot_network_properties",
-    "analyze_all",
-]
+__all__ = ["generate_report", "generate_all_reports"]
 
 
-def _load_all_results() -> dict:
-    """加载所有数据集的实验结果。"""
-    results = {}
-    for name in EXPERIMENT_DATASETS:
-        summary_path = OUT_DIR / name / "summary.json"
-        if summary_path.exists():
-            with open(summary_path) as f:
-                results[name] = json.load(f)
-    return results
+def _load_summary(dataset_name: str) -> dict | None:
+    p = OUT_DIR / dataset_name / "summary.json"
+    if p.exists():
+        with open(p) as f:
+            return json.load(f)
+    return None
 
 
-def build_summary_table(all_results: dict | None = None) -> str:
-    """生成 Markdown 格式的 thesis 汇总表。"""
-    if all_results is None:
-        all_results = _load_all_results()
-    if not all_results:
-        return "(无结果数据)"
-
-    lines = []
-    lines.append("| 数据集 | 类型 | 模式数 | 平均尺寸 | 总频次 | 耗时(s) |")
-    lines.append("|--------|------|--------|----------|--------|---------|")
-    for name, cfg in EXPERIMENT_DATASETS.items():
-        res = all_results.get(name, {})
-        if not res:
-            continue
-        lines.append("| {} | {} | {} | {:.1f} | {} | {:.1f} |".format(
-            cfg["label"],
-            "人工" if cfg["type"] == "synthetic" else "真实",
-            res.get("n_patterns", 0),
-            res.get("mean_pattern_size", 0),
-            res.get("total_counts", 0),
-            res.get("time_seconds", 0),
-        ))
-    return "\n".join(lines)
+def _load_baseline(dataset_name: str) -> dict | None:
+    p = OUT_DIR / dataset_name / "baseline" / "summary.json"
+    if p.exists():
+        with open(p) as f:
+            return json.load(f)
+    return None
 
 
-def plot_size_distribution(all_results: dict | None = None) -> Path:
-    """各数据集模式尺寸分布 (分组柱状图)。"""
-    if all_results is None:
-        all_results = _load_all_results()
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    x_labels = []
-    all_data = []
-    for name, cfg in EXPERIMENT_DATASETS.items():
-        res = all_results.get(name)
-        if not res:
-            continue
-        sd = res.get("size_distribution", {})
-        if not sd:
-            continue
-        x_labels.append(cfg["label"])
-        sizes = []
-        # 按尺寸扩展为列表
-        for size_str, count in sd.items():
-            sizes.extend([int(size_str)] * count)
-        all_data.append(sizes)
-
-    if all_data:
-        ax.boxplot(all_data, labels=x_labels)
-        ax.set_xlabel("数据集")
-        ax.set_ylabel("模式尺寸")
-        ax.set_title("各数据集模式尺寸分布")
-        plt.xticks(rotation=15)
-        path = PLOT_DIR / "size_distribution.png"
-        plt.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close()
-        return path
-    plt.close()
-    return PLOT_DIR / "size_distribution.png"
-
-
-def plot_top_patterns(all_results: dict | None = None, top_k: int = 5) -> Path:
-    """各数据集 Top-K 模式频次对比。"""
-    if all_results is None:
-        all_results = _load_all_results()
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    names = []
-    freqs = []
-    for name, cfg in EXPERIMENT_DATASETS.items():
-        res = all_results.get(name)
-        if not res:
-            continue
-        fb = res.get("freq_by_size", {})
-        if fb:
-            # 取所有尺寸中最大 median 频次
-            max_median = max(v["median"] for v in fb.values())
-            names.append(cfg["label"])
-            freqs.append(max_median)
-
-    if freqs:
-        colors = ["#4C72B0", "#DD8452", "#55A868", "#C44E52"][:len(freqs)]
-        ax.bar(names, freqs, color=colors)
-        ax.set_ylabel("中位数频次 (log)")
-        ax.set_yscale("log")
-        ax.set_title("各数据集 Top 模式频次对比")
-        plt.xticks(rotation=15)
-        path = PLOT_DIR / "top_patterns.png"
-        plt.savefig(path, dpi=150, bbox_inches="tight")
-        plt.close()
-        return path
-    plt.close()
-    return PLOT_DIR / "top_patterns.png"
-
-
-def plot_network_properties() -> Path:
-    """网络基本属性对比。"""
-    PLOT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # 统计各数据集的网络属性
-    props = {}
-    for name, cfg in EXPERIMENT_DATASETS.items():
-        counts_path = OUT_DIR / name / "counts.json"
-        if not counts_path.exists():
-            continue
-        # 从计数文件获取模式信息
-        try:
-            import pickle
-            patterns_path = OUT_DIR / name / "patterns.p"
-            if patterns_path.exists():
-                with open(patterns_path, "rb") as f:
-                    patterns = pickle.load(f)
-                sizes = [len(g) for g in patterns]
-                edges = [g.number_of_edges() for g in patterns]
-                props[cfg["label"]] = {
-                    "avg_nodes": np.mean(sizes) if sizes else 0,
-                    "avg_edges": np.mean(edges) if edges else 0,
-                    "density": np.mean([2*e/(s*(s-1)) if s > 1 else 0
-                                        for s, e in zip(sizes, edges)]),
-                }
-        except Exception:
-            continue
-
-    if not props:
-        return PLOT_DIR / "network_properties.png"
-
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
-    labels = list(props.keys())
-    metrics = [
-        ("avg_nodes", "平均节点数"),
-        ("avg_edges", "平均边数"),
-        ("density", "平均密度"),
-    ]
-    for ax, (key, ylabel) in zip(axes, metrics):
-        vals = [props[l][key] for l in labels]
-        ax.bar(labels, vals, color=["#4C72B0", "#DD8452", "#55A868", "#C44E52"])
-        ax.set_ylabel(ylabel)
-        ax.set_xticklabels(labels, rotation=15)
-
-    plt.tight_layout()
-    path = PLOT_DIR / "network_properties.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    return path
-
-
-def analyze_all():
-    """生成全部汇总输出。"""
-    results = _load_all_results()
-    if not results:
-        print("无实验结果。请先运行 python -m main.run_all")
+def _plot_size_distribution(stats: dict, out_path: Path):
+    """模式尺寸分布柱状图。"""
+    sd = stats.get("size_distribution", {})
+    if not sd:
         return
+    sizes = sorted(int(k) for k in sd)
+    counts = [sd[str(s)] for s in sizes]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.bar(sizes, counts, width=0.6, edgecolor="black")
+    ax.set_xlabel("模式尺寸")
+    ax.set_ylabel("数量")
+    ax.set_title("模式尺寸分布")
+    ax.set_xticks(sizes)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
 
-    print(build_summary_table(results))
-    print()
-    print("生成图表 ...")
-    plot_size_distribution(results)
-    plot_top_patterns(results)
-    plot_network_properties()
-    print("图表保存至 {}".format(PLOT_DIR))
+
+def _plot_baseline_comparison(stats: dict, baseline: dict, out_path: Path):
+    """SPMiner vs ER 基线频次对比。"""
+    real_fb = stats.get("freq_by_size", {})
+    base_fb = baseline.get("freq_by_size", {})
+    if not real_fb:
+        return
+    sizes = sorted(int(k) for k in real_fb)
+    real_medians = [real_fb[str(s)]["median"] for s in sizes if str(s) in real_fb]
+    base_medians = [base_fb.get(str(s), {}).get("median", 0) for s in sizes if str(s) in real_fb]
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    x = np.arange(len(sizes))
+    w = 0.35
+    ax.bar(x - w/2, real_medians, w, label="SPMiner (真实)", edgecolor="black")
+    ax.bar(x + w/2, base_medians, w, label="ER 基线", edgecolor="black")
+    ax.set_xlabel("模式尺寸")
+    ax.set_ylabel("频次中位数")
+    ax.set_xticks(x)
+    ax.set_xticklabels(sizes)
+    ax.legend()
+    ax.set_title("SPMiner vs ER 基线频次对比")
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def generate_report(dataset_name: str) -> str | None:
+    """为单个数据集生成 Markdown 分析报告。"""
+    cfg = EXPERIMENT_DATASETS.get(dataset_name)
+    if cfg is None:
+        return None
+
+    stats = _load_summary(dataset_name)
+    if stats is None:
+        return None
+
+    baseline = _load_baseline(dataset_name)
+    out_dir = OUT_DIR / dataset_name
+    report_dir = out_dir / "report_plots"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    # 生成图表
+    _plot_size_distribution(stats, report_dir / "size_distribution.png")
+    if baseline:
+        _plot_baseline_comparison(stats, baseline, report_dir / "baseline_compare.png")
+
+    # 拼报告
+    lines = []
+    lines.append("# 实验报告: {}".format(cfg["label"]))
+    lines.append("")
+    lines.append("| 属性 | 值 |")
+    lines.append("|------|-----|")
+    lines.append("| 数据集 | {} |".format(dataset_name))
+    lines.append("| 类型 | {} |".format("人工合成" if cfg["type"] == "synthetic" else "真实网络"))
+    lines.append("| 模式数 | {} |".format(stats.get("n_patterns", 0)))
+    lines.append("| 平均尺寸 | {:.2f} |".format(stats.get("mean_pattern_size", 0)))
+    lines.append("| 总频次 | {} |".format(stats.get("total_counts", 0)))
+    lines.append("| 耗时 | {:.1f}s |".format(stats.get("time_seconds", 0)))
+    lines.append("")
+
+    # 尺寸分布
+    sd = stats.get("size_distribution", {})
+    if sd:
+        lines.append("## 模式尺寸分布")
+        lines.append("")
+        lines.append("| 尺寸 | 数量 |")
+        lines.append("|------|------|")
+        for s in sorted(int(k) for k in sd):
+            lines.append("| {} | {} |".format(s, sd[str(s)]))
+        lines.append("")
+        lines.append("![尺寸分布](report_plots/size_distribution.png)")
+        lines.append("")
+
+    # 频次统计
+    fb = stats.get("freq_by_size", {})
+    if fb:
+        lines.append("## 频次统计")
+        lines.append("")
+        lines.append("| 尺寸 | 均值 | 中位数 | 最大 | 最小 |")
+        lines.append("|------|------|--------|------|------|")
+        for s in sorted(int(k) for k in fb):
+            v = fb[str(s)]
+            lines.append("| {} | {:.1f} | {:.1f} | {} | {} |".format(
+                s, v["mean"], v["median"], v["max"], v["min"]))
+        lines.append("")
+
+    # 基线对比
+    if baseline:
+        lines.append("## 基线对比 (ER 随机图)")
+        lines.append("")
+        lines.append("| 指标 | SPMiner (真实) | ER 基线 |")
+        lines.append("|------|---------------|---------|")
+        lines.append("| 模式数 | {} | {} |".format(
+            stats.get("n_patterns", 0), baseline.get("n_patterns", 0)))
+        lines.append("| 总频次 | {} | {} |".format(
+            stats.get("total_counts", 0), baseline.get("total_counts", 0)))
+        lines.append("")
+        lines.append("![基线对比](report_plots/baseline_compare.png)")
+        lines.append("")
+
+    report = "\n".join(lines)
+    report_path = out_dir / "report.md"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report)
+    return report
+
+
+def generate_all_reports():
+    """为所有有结果的数据集生成报告。"""
+    print("生成分析报告 ...")
+    for name in EXPERIMENT_DATASETS:
+        report = generate_report(name)
+        if report:
+            print("  {} → report.md".format(name))
+            # 前 15 行摘要
+            first_lines = report.split("\n")[:8]
+            for l in first_lines:
+                print("    {}".format(l))
+            print()
 
 
 if __name__ == "__main__":
-    analyze_all()
+    generate_all_reports()
